@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quản lý Ghi chú</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <?!= include('CSS'); ?>
+</head>
+<body>
+  <!-- Loading Overlay -->
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="spinner"></div>
+    <p>Đang tải...</p>
+  </div>
+
+  <!-- Notification -->
+  <div id="notification" class="notification"></div>
+
+  <!-- Main Container -->
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <h1>
+        <a href="<?= sheetUrl ?>" target="_blank" style="text-decoration: none; color: inherit; display: flex; align-items: center; gap: 10px;">
+          <i class="fas fa-sticky-note"></i> QUẢN LÝ GHI CHÚ
+        </a>
+      </h1>
+      
+      <!-- Tabs inside header -->
+      <div class="tabs">
+        <button id="tab-prompts" class="tab-btn active">
+          <i class="fas fa-brain"></i> Prompts
+        </button>
+        <button id="tab-notes" class="tab-btn">
+          <i class="fas fa-sticky-note"></i> Ghi chú
+        </button>
+        <button id="tab-accounts" class="tab-btn">
+          <i class="fas fa-user-lock"></i> Tài khoản
+        </button>
+        <button id="tab-tasks" class="tab-btn">
+          <i class="fas fa-calendar-check"></i> Tasks
+        </button>
+        <button id="tab-recycle" class="tab-btn">
+          <i class="fas fa-trash-alt"></i> Thùng rác
+        </button>
+        <button id="tab-settings" class="tab-btn">
+          <i class="fas fa-cog"></i> Settings
+        </button>
+      </div>
+      
+      <div class="header-actions">
+        <button id="btn-add-prompt" class="btn btn-primary add-btn" style="display: none;">
+          <i class="fas fa-plus"></i> Thêm Prompt
+        </button>
+        <button id="btn-add-note" class="btn btn-primary add-btn" style="display: none;">
+          <i class="fas fa-plus"></i> Thêm Ghi chú
+        </button>
+        <button id="btn-add-account" class="btn btn-primary add-btn" style="display: none;">
+          <i class="fas fa-plus"></i> Thêm Tài khoản
+        </button>
+        <button id="btn-add-task" class="btn btn-primary add-btn" style="display: none;">
+          <i class="fas fa-plus"></i> Thêm Task
+        </button>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <div class="content">
+      <!-- Prompts Tab -->
+      <div id="content-prompts" class="tab-content active">
+        <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+          <div class="search-box-tab" style="flex: 1;">
+            <i class="fas fa-search"></i>
+            <input type="text" id="search-prompts" placeholder="Tìm kiếm prompts...">
+          </div>
+          <div class="view-mode-buttons">
+            <button id="prompts-view-tree" class="view-mode-btn prompts-view-btn active" onclick="setViewMode('prompts', 'tree')" title="Tree View">
+              <i class="fas fa-sitemap"></i>
+            </button>
+            <button id="prompts-view-grid" class="view-mode-btn prompts-view-btn" onclick="setViewMode('prompts', 'grid')" title="Grid View">
+              <i class="fas fa-th"></i>
+            </button>
+            <button id="prompts-view-list" class="view-mode-btn prompts-view-btn" onclick="setViewMode('prompts', 'list')" title="List View">
+              <i class="fas fa-list"></i>
+            </button>
+          </div>
+        </div>
+        <div id="prompts-container" class="prompts-container"></div>
+      </div>
+
+      <!-- Notes Tab -->
+      <div id="content-notes" class="tab-content">
+        <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px; flex-wrap: wrap;">
+          <div class="search-box-tab" style="position: relative; flex: 1; max-width: 400px;">
+            <i class="fas fa-search"></i>
+            <input type="text" id="search-notes" placeholder="Tìm kiếm ghi chú...">
+          </div>
+          <span style="font-size: 12px; color: #e94849;">cho phép tìm kiếm tiêu đề luôn</span>
+          <div class="view-mode-buttons">
+            <button id="notes-view-tree" class="view-mode-btn notes-view-btn active" onclick="setViewMode('notes', 'tree')" title="Tree View">
+              <i class="fas fa-sitemap"></i>
+            </button>
+            <button id="notes-view-grid" class="view-mode-btn notes-view-btn" onclick="setViewMode('notes', 'grid')" title="Grid View">
+              <i class="fas fa-th"></i>
+            </button>
+            <button id="notes-view-list" class="view-mode-btn notes-view-btn" onclick="setViewMode('notes', 'list')" title="List View">
+              <i class="fas fa-list"></i>
+            </button>
+          </div>
+        </div>
+        <div id="notes-container" class="notes-container"></div>
+      </div>
+
+      <!-- Accounts Tab -->
+      <div id="content-accounts" class="tab-content">
+        <div class="search-box-tab">
+          <i class="fas fa-search"></i>
+          <input type="text" id="search-accounts" placeholder="Tìm kiếm tài khoản...">
+        </div>
+        <div id="accounts-container" class="accounts-container"></div>
+      </div>
+
+      <!-- Tasks Tab -->
+      <div id="content-tasks" class="tab-content">
+        <div class="calendar-header">
+          <div class="calendar-stats">
+            <div class="stat-card">
+              <div class="stat-value" id="stat-total">0</div>
+              <div class="stat-label">Tổng task</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="stat-completed">0</div>
+              <div class="stat-label">Hoàn thành</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="stat-rate">0%</div>
+              <div class="stat-label">Tỷ lệ</div>
+            </div>
+            <!-- ← THÊM BOX MỚI -->
+            <div class="stat-card">
+              <div class="stat-value" id="stat-upcoming">0</div>
+              <div class="stat-label">7 ngày tới</div>
+            </div>
+          </div>
+
+          <div class="search-box-tab">
+            <i class="fas fa-search"></i>
+            <input type="text" id="search-tasks" placeholder="Tìm kiếm tasks...">
+          </div>
+          
+          <div class="calendar-nav">
+            <button class="btn-nav" onclick="changeWeek(-1)"><i class="fas fa-chevron-left"></i></button>
+            <h3 id="current-week-label">Tháng 11 2025</h3>
+            <button class="btn-nav" onclick="changeWeek(1)"><i class="fas fa-chevron-right"></i></button>
+            <button class="btn btn-secondary" onclick="goToThisWeek()">Tháng này</button>
+          </div>
+        </div>
+        <div id="tasks-calendar" class="tasks-calendar"></div>
+      </div>
+
+      <!-- Recycle Bin Tab -->
+      <div id="content-recycle" class="tab-content">
+        <div id="recycle-container" class="recycle-container"></div>
+      </div>
+
+      <!-- Settings Tab -->
+      <div id="content-settings" class="tab-content">
+        <div class="settings-container">
+          <h2 style="margin-bottom: 25px; color: #2c3e50; text-align: center;">
+            <i class="fas fa-cog"></i> Cài đặt giao diện
+          </h2>
+          
+          <div class="settings-form">
+            <!-- Màu nền chính -->
+            <div class="settings-section">
+              <h3 class="settings-section-title">
+                <i class="fas fa-paint-brush"></i> Màu nền chính
+              </h3>
+              <div class="form-group">
+                <label for="setting-bg-main">Màu nền chính</label>
+                <div class="color-input-wrapper">
+                  <input type="color" id="setting-bg-main" class="color-picker" value="#f5f7fa">
+                  <input type="text" id="setting-bg-main-text" class="color-text-input" placeholder="#f5f7fa">
+                </div>
+              </div>
+            </div>
+
+            <!-- Level 0 Settings -->
+            <div class="settings-section">
+              <h3 class="settings-section-title">
+                <i class="fas fa-layer-group"></i> Level 0 (Tiêu đề cấp 1)
+              </h3>
+              <div class="form-group">
+                <label for="setting-lv0-color">Màu chữ Title</label>
+                <div class="color-input-wrapper">
+                  <input type="color" id="setting-lv0-color" class="color-picker" value="#1a472a">
+                  <input type="text" id="setting-lv0-color-text" class="color-text-input" placeholder="#1a472a">
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="setting-lv0-bg">Màu nền khối</label>
+                <div class="color-input-wrapper">
+                  <input type="color" id="setting-lv0-bg" class="color-picker" value="#ffffff">
+                  <input type="text" id="setting-lv0-bg-text" class="color-text-input" placeholder="#ffffff">
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="setting-lv0-border-width">Độ dày border (px)</label>
+                <input type="number" id="setting-lv0-border-width" class="number-input" min="0" max="10" step="1" value="3">
+              </div>
+              <div class="form-group">
+                <label for="setting-lv0-border-color">Màu border</label>
+                <div class="color-input-wrapper">
+                  <input type="color" id="setting-lv0-border-color" class="color-picker" value="#24c560">
+                  <input type="text" id="setting-lv0-border-color-text" class="color-text-input" placeholder="#24c560">
+                </div>
+              </div>
+            </div>
+
+            <!-- Level 1 Settings -->
+            <div class="settings-section">
+              <h3 class="settings-section-title">
+                <i class="fas fa-layer-group"></i> Level 1 (Tiêu đề cấp 2)
+              </h3>
+              <div class="form-group">
+                <label for="setting-lv1-color">Màu chữ Title</label>
+                <div class="color-input-wrapper">
+                  <input type="color" id="setting-lv1-color" class="color-picker" value="#1ea84d">
+                  <input type="text" id="setting-lv1-color-text" class="color-text-input" placeholder="#1ea84d">
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="setting-lv1-bg">Màu nền khối</label>
+                <div class="color-input-wrapper">
+                  <input type="color" id="setting-lv1-bg" class="color-picker" value="#ffffff">
+                  <input type="text" id="setting-lv1-bg-text" class="color-text-input" placeholder="#ffffff">
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="setting-lv1-border-width">Độ dày border (px)</label>
+                <input type="number" id="setting-lv1-border-width" class="number-input" min="0" max="10" step="1" value="4">
+              </div>
+              <div class="form-group">
+                <label for="setting-lv1-border-color">Màu border</label>
+                <div class="color-input-wrapper">
+                  <input type="color" id="setting-lv1-border-color" class="color-picker" value="#24c560">
+                  <input type="text" id="setting-lv1-border-color-text" class="color-text-input" placeholder="#24c560">
+                </div>
+              </div>
+            </div>
+
+            <!-- Level 2 Settings -->
+            <div class="settings-section">
+              <h3 class="settings-section-title">
+                <i class="fas fa-layer-group"></i> Level 2 (Ghi chú Cards)
+              </h3>
+              <div class="form-group">
+                <label for="setting-lv2-color">Màu chữ Title</label>
+                <div class="color-input-wrapper">
+                  <input type="color" id="setting-lv2-color" class="color-picker" value="#3782f4">
+                  <input type="text" id="setting-lv2-color-text" class="color-text-input" placeholder="#3782f4">
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="setting-lv2-bg">Màu nền khối</label>
+                <div class="color-input-wrapper">
+                  <input type="color" id="setting-lv2-bg" class="color-picker" value="#ffffff">
+                  <input type="text" id="setting-lv2-bg-text" class="color-text-input" placeholder="#ffffff">
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="setting-lv2-border-width">Độ dày border (px)</label>
+                <input type="number" id="setting-lv2-border-width" class="number-input" min="0" max="10" step="1" value="1">
+              </div>
+              <div class="form-group">
+                <label for="setting-lv2-border-color">Màu border</label>
+                <div class="color-input-wrapper">
+                  <input type="color" id="setting-lv2-border-color" class="color-picker" value="#e0e0e0">
+                  <input type="text" id="setting-lv2-border-color-text" class="color-text-input" placeholder="#e0e0e0">
+                </div>
+              </div>
+            </div>
+            
+            <div class="settings-actions">
+              <button type="button" id="btn-save-settings" class="btn btn-primary">
+                <i class="fas fa-save"></i> Lưu cài đặt
+              </button>
+              <button type="button" id="btn-reset-settings" class="btn btn-secondary">
+                <i class="fas fa-undo"></i> Đặt lại mặc định
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal for Prompts -->
+  <div id="modal-prompt" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Thêm Prompt mới</h2>
+        <button class="modal-close"><i class="fas fa-times"></i></button>
+      </div>
+      <form id="form-prompt">
+        <div class="form-group">
+          <label for="prompt-title">Tiêu đề <span class="required">*</span></label>
+          <input type="text" name="title" id="prompt-title" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label for="prompt-content">Nội dung</label>
+          <!-- THÊM TOOLBAR -->
+          <div class="table-toolbar">
+            <button type="button" onclick="insertImages('prompt-content')">
+              <i class="fas fa-image"></i> Thêm hình
+            </button>
+            <button type="button" onclick="insertTable('prompt-content')">
+              <i class="fas fa-table"></i> Thêm bảng
+            </button>
+            <button type="button" onclick="formatText('prompt-content', 'bold')">
+              <i class="fas fa-bold"></i> In đậm
+            </button>
+            <button type="button" onclick="formatText('prompt-content', 'italic')">
+              <i class="fas fa-italic"></i> In nghiêng
+            </button>
+          </div>
+          <div id="prompt-content" name="content" class="form-control content-editor" contenteditable="true"></div>
+        </div>
+        <div class="form-group">
+          <label for="prompt-tags">Tags</label>
+          <input type="text" name="tags" id="prompt-tags" class="form-control" placeholder="Nhập tag, ngăn cách bởi dấu phẩy (ví dụ: Work, Urgent)">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary modal-cancel">Hủy</button>
+          <button type="button" id="modal-save-prompt" class="btn btn-primary">Lưu</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal for Notes -->
+  <div id="modal-note" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Thêm Ghi chú mới</h2>
+        <button class="modal-close"><i class="fas fa-times"></i></button>
+      </div>
+      <form id="form-note">
+        <div class="form-group">
+          <label for="note-title">Tiêu đề <span class="required">*</span></label>
+          <input type="text" name="title" id="note-title" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label for="note-content">Nội dung</label>
+          <!-- THÊM TOOLBAR -->
+          <div class="table-toolbar">
+            <button type="button" onclick="insertImages('note-content')">
+              <i class="fas fa-image"></i> Thêm hình
+            </button>
+            <button type="button" onclick="insertTable('note-content')">
+              <i class="fas fa-table"></i> Thêm bảng
+            </button>
+            <button type="button" onclick="formatText('note-content', 'bold')">
+              <i class="fas fa-bold"></i> In đậm
+            </button>
+            <button type="button" onclick="formatText('note-content', 'italic')">
+              <i class="fas fa-italic"></i> In nghiêng
+            </button>
+          </div>
+          <div id="note-content" name="content" class="form-control content-editor" contenteditable="true"></div>
+        </div>
+          <div class="form-group">
+            <label for="note-tags">Tags</label>
+            <input type="text" name="tags" id="note-tags" class="form-control" placeholder="Nhập tag, ngăn cách bởi dấu phẩy (ví dụ: Work, Urgent)">
+          </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary modal-cancel">Hủy</button>
+          <button type="button" id="modal-save-note" class="btn btn-primary">Lưu</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal for Accounts -->
+  <div id="modal-account" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Thêm Tài khoản mới</h2>
+        <button class="modal-close"><i class="fas fa-times"></i></button>
+      </div>
+      <form id="form-account">
+        <div class="form-group">
+          <label for="account-type">Loại tài khoản <span class="required">*</span></label>
+          <input type="text" name="accountType" id="account-type" class="form-control" placeholder="VD: Facebook, Gmail, Bank">
+        </div>
+        <div class="form-group">
+          <label for="account-username">Tên đăng nhập <span class="required username-required" style="display:none;">*</span></label>
+          <input type="text" name="username" id="account-username" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="account-password">Mật khẩu <span class="required password-required" style="display:none;">* (tối thiểu 6 ký tự)</span></label>
+          <div class="password-input-wrapper">
+            <input type="password" name="password" id="account-password" class="form-control">
+            <i class="fas fa-eye password-toggle-icon" onclick="togglePasswordInModal('account-password')"></i>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="account-phone">Số điện thoại</label>
+          <input type="text" name="phone" id="account-phone" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="account-notes">Ghi chú</label>
+          <div id="account-notes" name="notes" class="form-control content-editor" contenteditable="true"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary modal-cancel">Hủy</button>
+          <button type="button" id="modal-save-account" class="btn btn-primary">Lưu</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal for Tasks -->
+  <div id="modal-task" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Thêm Task mới</h2>
+        <button class="modal-close"><i class="fas fa-times"></i></button>
+      </div>
+      <form id="form-task">
+        <div class="form-group">
+          <label for="task-date">Ngày <span class="required">*</span></label>
+          <input type="date" name="date" id="task-date" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label for="task-title">Tiêu đề <span class="required">*</span></label>
+          <input type="text" name="title" id="task-title" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label for="task-content">Nội dung</label>
+          <div class="table-toolbar">
+            <button type="button" onclick="insertImages('task-content')">
+              <i class="fas fa-image"></i> Thêm hình
+            </button>
+            <button type="button" onclick="insertTable('task-content')">
+              <i class="fas fa-table"></i> Thêm bảng
+            </button>
+            <button type="button" onclick="formatText('task-content', 'bold')">
+              <i class="fas fa-bold"></i> In đậm
+            </button>
+            <button type="button" onclick="formatText('task-content', 'italic')">
+              <i class="fas fa-italic"></i> In nghiêng
+            </button>
+          </div>
+          <div id="task-content" name="content" class="form-control content-editor" contenteditable="true"></div>
+        </div>
+        <div class="form-group">
+          <label>
+            <input type="checkbox" name="completed" id="task-completed">
+            Đã hoàn thành
+          </label>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary modal-cancel">Hủy</button>
+          <button type="button" id="modal-save-task" class="btn btn-primary">Lưu</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal View Content -->
+  <div id="modal-view-content" class="modal">
+    <div class="modal-content modal-view-large">
+      <div class="modal-header">
+        <h2 class="modal-title" id="view-content-title">Tiêu đề</h2>
+        <button class="modal-close"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body">
+        <div id="view-content-text" class="view-content-text"></div>
+      </div>
+      <div class="modal-footer modal-footer-center">
+        <button type="button" class="btn btn-primary" onclick="copyViewContent()">
+          <i class="fas fa-copy"></i> Sao chép
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Insert Table -->
+  <div id="modal-insert-table" class="modal">
+    <div class="modal-content" style="max-width: 400px;">
+      <div class="modal-header">
+        <h2 class="modal-title">Thêm bảng</h2>
+        <button class="modal-close"><i class="fas fa-times"></i></button>
+      </div>
+      <form id="form-insert-table">
+        <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+          <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <label for="table-rows">Số hàng <span class="required">*</span></label>
+            <input type="number" id="table-rows" class="form-control" min="1" max="20" value="3" required>
+          </div>
+          <div class="form-group" style="flex: 1; margin-bottom: 0;">
+            <label for="table-cols">Số cột <span class="required">*</span></label>
+            <input type="number" id="table-cols" class="form-control" min="1" max="10" value="3" required>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-create-table" class="btn btn-primary">
+            <i class="fas fa-table"></i> Tạo bảng
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Table Context Menu -->
+  <div id="table-context-menu" class="table-context-menu" style="display: none;">
+    <div class="context-menu-item" onclick="tableAction('addRowAbove')">
+      <i class="fas fa-arrow-up"></i> Thêm hàng phía trên
+    </div>
+    <div class="context-menu-item" onclick="tableAction('addRowBelow')">
+      <i class="fas fa-arrow-down"></i> Thêm hàng phía dưới
+    </div>
+    <div class="context-menu-item" onclick="tableAction('deleteRow')">
+      <i class="fas fa-trash"></i> Xóa hàng
+    </div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item" onclick="tableAction('addColLeft')">
+      <i class="fas fa-arrow-left"></i> Thêm cột bên trái
+    </div>
+    <div class="context-menu-item" onclick="tableAction('addColRight')">
+      <i class="fas fa-arrow-right"></i> Thêm cột bên phải
+    </div>
+    <div class="context-menu-item" onclick="tableAction('deleteCol')">
+      <i class="fas fa-trash"></i> Xóa cột
+    </div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item" onclick="tableAction('deleteTable')">
+      <i class="fas fa-times"></i> Xóa bảng
+    </div>
+  </div>
+
+  <!-- Modal Insert Images -->
+  <div id="modal-insert-images" class="modal">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h2 class="modal-title">Thêm hình ảnh</h2>
+        <button class="modal-close"><i class="fas fa-times"></i></button>
+      </div>
+      <form id="form-insert-images">
+        <div style="padding: 25px;">
+          <label>URLs (mỗi dòng 1 URL) <span class="required">*</span></label>
+          <textarea id="image-urls" class="form-control" rows="5" placeholder="https://example.com/image.jpg&#10;https://drive.google.com/file/d/FILE_ID/view"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-insert-images" class="btn btn-primary">
+            <i class="fas fa-images"></i> Thêm
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Add More Images -->
+  <div id="modal-add-more-images" class="modal">
+    <div class="modal-content" style="max-width: 400px;">
+      <div class="modal-header">
+        <h2 class="modal-title">Thêm hình ảnh</h2>
+        <button class="modal-close"><i class="fas fa-times"></i></button>
+      </div>
+      <form id="form-add-more-images">
+        <div style="padding: 25px;">
+          <label>URLs (mỗi dòng 1 URL) <span class="required">*</span></label>
+          <textarea id="more-image-urls" class="form-control" rows="4" placeholder="https://example.com/image.jpg&#10;https://drive.google.com/..."></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="btn-add-more-images" class="btn btn-primary">
+            <i class="fas fa-plus"></i> Thêm
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Confirm Delete Image -->
+  <div id="modal-confirm-delete" class="modal">
+    <div class="modal-content" style="max-width: 350px;">
+      <div class="modal-header">
+        <h2 class="modal-title">Xác nhận</h2>
+      </div>
+      <div style="padding: 25px; text-align: center;">
+        <i class="fas fa-exclamation-triangle" style="font-size: 48px; color: #e94849; margin-bottom: 15px;"></i>
+        <p style="font-size: 16px; color: #333;">Xóa hình này?</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-confirm-no" class="btn btn-secondary">Không</button>
+        <button type="button" id="btn-confirm-yes" class="btn btn-primary" style="background: #e94849;">Có</button>
+      </div>
+    </div>
+  </div>
+
+  <?!= include('JavaScript'); ?>
+</body>
+</html>

@@ -1,0 +1,3694 @@
+<script>
+// ===== GLOBAL VARIABLES =====
+var allPrompts = [];
+var allNotes = [];
+var allAccounts = [];
+var allTasks = [];
+var currentMonthDate = new Date();
+var currentTab = 'prompts';
+var searchTermPrompts = '';
+var searchTermNotes = '';
+var searchTermAccounts = '';
+var searchTermTasks = '';
+var isLoading = false;
+var currentTableCell = null;
+var tableUndoHistory = [];
+var draggedItem = null;
+var draggedParentId = null;
+var originalIndex = -1;
+var expandedTasks = {};
+var savedSelection = null;
+var quickViewCollapsed = {}; // Quick View collapsed state
+var appSettings = {}; // Settings data
+var promptsViewMode = 'tree'; // View mode for Prompts: 'tree' | 'grid' | 'list'
+var notesViewMode = 'tree'; // View mode for Notes: 'tree' | 'grid' | 'list'
+
+// ===== DATA LOADING =====
+function loadAllData() {
+  return new Promise(function(resolve, reject) {
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result.error) {
+          reject(new Error(result.error));
+          return;
+        }
+        
+        // Update global data arrays
+        allPrompts = result.prompts || [];
+        allNotes = result.notes || [];
+        allAccounts = result.accounts || [];
+        allTasks = result.tasks || [];
+        
+        // Load settings
+        loadSettings().then(function() {
+          resolve();
+        }).catch(function(err) {
+          // If settings fail, continue anyway
+          console.log('Settings load error:', err);
+          resolve();
+        });
+      })
+      .withFailureHandler(function(error) {
+        reject(error);
+      })
+      .getAllData();
+  });
+}
+
+// Load settings from backend
+function loadSettings() {
+  return new Promise(function(resolve, reject) {
+    google.script.run
+      .withSuccessHandler(function(settings) {
+        appSettings = settings || {};
+        applySettings();
+        resolve();
+      })
+      .withFailureHandler(function(error) {
+        reject(error);
+      })
+      .getSettings();
+  });
+}
+
+// Apply settings to CSS variables
+function applySettings() {
+  var root = document.documentElement;
+  
+  // Apply background color
+  if (appSettings['bg-main']) {
+    root.style.setProperty('--bg-main', appSettings['bg-main']);
+  }
+  
+  // Apply Level 0 settings
+  if (appSettings['lv0-color']) {
+    root.style.setProperty('--lv0-color', appSettings['lv0-color']);
+  }
+  if (appSettings['lv0-bg']) {
+    root.style.setProperty('--lv0-bg', appSettings['lv0-bg']);
+  }
+  if (appSettings['lv0-border-width']) {
+    root.style.setProperty('--lv0-border-width', appSettings['lv0-border-width'] + 'px');
+  }
+  if (appSettings['lv0-border-color']) {
+    root.style.setProperty('--lv0-border-color', appSettings['lv0-border-color']);
+  }
+  
+  // Apply Level 1 settings
+  if (appSettings['lv1-color']) {
+    root.style.setProperty('--lv1-color', appSettings['lv1-color']);
+  }
+  if (appSettings['lv1-bg']) {
+    root.style.setProperty('--lv1-bg', appSettings['lv1-bg']);
+  }
+  if (appSettings['lv1-border-width']) {
+    root.style.setProperty('--lv1-border-width', appSettings['lv1-border-width'] + 'px');
+  }
+  if (appSettings['lv1-border-color']) {
+    root.style.setProperty('--lv1-border-color', appSettings['lv1-border-color']);
+  }
+  
+  // Apply Level 2 settings
+  if (appSettings['lv2-color']) {
+    root.style.setProperty('--lv2-color', appSettings['lv2-color']);
+  }
+  if (appSettings['lv2-bg']) {
+    root.style.setProperty('--lv2-bg', appSettings['lv2-bg']);
+  }
+  if (appSettings['lv2-border-width']) {
+    root.style.setProperty('--lv2-border-width', appSettings['lv2-border-width'] + 'px');
+  }
+  if (appSettings['lv2-border-color']) {
+    root.style.setProperty('--lv2-border-color', appSettings['lv2-border-color']);
+  }
+}
+
+// ===== EVENT LISTENERS SETUP =====
+function setupEventListeners() {
+  // Tab switching
+  document.getElementById('tab-prompts').addEventListener('click', function() { switchTab('prompts'); });
+  document.getElementById('tab-notes').addEventListener('click', function() { switchTab('notes'); });
+  document.getElementById('tab-accounts').addEventListener('click', function() { switchTab('accounts'); });
+  document.getElementById('tab-tasks').addEventListener('click', function() { switchTab('tasks'); });
+  document.getElementById('tab-recycle').addEventListener('click', function() { switchTab('recycle'); });
+  document.getElementById('tab-settings').addEventListener('click', function() { switchTab('settings'); });
+  
+  // Add buttons
+  document.getElementById('btn-add-prompt').addEventListener('click', function() { showAddModal('prompts'); });
+  document.getElementById('btn-add-note').addEventListener('click', function() { showAddModal('notes'); });
+  document.getElementById('btn-add-account').addEventListener('click', function() { showAddModal('accounts'); });
+  document.getElementById('btn-add-task').addEventListener('click', function() { showAddTaskModal(); });
+  
+  // Search inputs
+  var searchPrompts = document.getElementById('search-prompts');
+  if (searchPrompts) {
+    searchPrompts.addEventListener('input', function(e) {
+      searchTermPrompts = e.target.value;
+      renderPrompts();
+    });
+  }
+  
+  var searchNotes = document.getElementById('search-notes');
+  if (searchNotes) {
+    searchNotes.addEventListener('input', function(e) {
+      searchTermNotes = e.target.value;
+      renderNotes();
+    });
+  }
+  
+  var searchAccounts = document.getElementById('search-accounts');
+  if (searchAccounts) {
+    searchAccounts.addEventListener('input', function(e) {
+      searchTermAccounts = e.target.value;
+      renderAccounts();
+    });
+  }
+  
+  var searchTasks = document.getElementById('search-tasks');
+  if (searchTasks) {
+    searchTasks.addEventListener('input', function(e) {
+      searchTermTasks = e.target.value;
+      renderTasksCalendar();
+    });
+  }
+  
+  // Modal close buttons
+  document.querySelectorAll('.modal-close').forEach(function(btn) {
+    btn.addEventListener('click', closeModal);
+  });
+  
+  // Modal cancel buttons
+  document.querySelectorAll('.modal-cancel').forEach(function(btn) {
+    btn.addEventListener('click', closeModal);
+  });
+  
+  // Form save buttons
+  document.getElementById('modal-save-prompt').addEventListener('click', savePrompt);
+  document.getElementById('modal-save-note').addEventListener('click', saveNote);
+  document.getElementById('modal-save-account').addEventListener('click', saveAccount);
+  document.getElementById('modal-save-task').addEventListener('click', saveTask);
+  
+  // Table and image modals
+  document.getElementById('btn-create-table').addEventListener('click', createTableFromModal);
+  document.getElementById('btn-insert-images').addEventListener('click', insertImagesFromModal);
+  document.getElementById('btn-add-more-images').addEventListener('click', addMoreImagesFromModal);
+  
+  // Confirm delete modal
+  document.getElementById('btn-confirm-yes').addEventListener('click', function() { confirmDeleteImage(true); });
+  document.getElementById('btn-confirm-no').addEventListener('click', function() { confirmDeleteImage(false); });
+  
+  // Settings buttons
+  var btnSaveSettings = document.getElementById('btn-save-settings');
+  if (btnSaveSettings) {
+    btnSaveSettings.addEventListener('click', saveSettingsToBackend);
+  }
+  
+  var btnResetSettings = document.getElementById('btn-reset-settings');
+  if (btnResetSettings) {
+    btnResetSettings.addEventListener('click', resetSettingsToDefault);
+  }
+  
+  // Sync color pickers with text inputs
+  syncColorInputs('setting-bg-main', 'setting-bg-main-text');
+  syncColorInputs('setting-lv0-color', 'setting-lv0-color-text');
+  syncColorInputs('setting-lv0-bg', 'setting-lv0-bg-text');
+  syncColorInputs('setting-lv0-border-color', 'setting-lv0-border-color-text');
+  syncColorInputs('setting-lv1-color', 'setting-lv1-color-text');
+  syncColorInputs('setting-lv1-bg', 'setting-lv1-bg-text');
+  syncColorInputs('setting-lv1-border-color', 'setting-lv1-border-color-text');
+  syncColorInputs('setting-lv2-color', 'setting-lv2-color-text');
+  syncColorInputs('setting-lv2-bg', 'setting-lv2-bg-text');
+  syncColorInputs('setting-lv2-border-color', 'setting-lv2-border-color-text');
+  
+  // Close modal when clicking outside
+  document.querySelectorAll('.modal').forEach(function(modal) {
+    modal.addEventListener('click', function(e) {
+      if (e.target === modal) {
+        closeModal();
+      }
+    });
+  });
+  
+  // Setup drag and drop
+  setupDragAndDrop();
+  
+  // Setup image click handlers
+  setupImageClickHandlers();
+}
+
+// ===== VIEW MODE FUNCTIONS =====
+function loadViewModes() {
+  // Load from localStorage
+  var savedPromptsMode = localStorage.getItem('promptsViewMode');
+  var savedNotesMode = localStorage.getItem('notesViewMode');
+  
+  if (savedPromptsMode && ['tree', 'grid', 'list'].indexOf(savedPromptsMode) !== -1) {
+    promptsViewMode = savedPromptsMode;
+  }
+  
+  if (savedNotesMode && ['tree', 'grid', 'list'].indexOf(savedNotesMode) !== -1) {
+    notesViewMode = savedNotesMode;
+  }
+}
+
+function saveViewMode(type, mode) {
+  if (type === 'prompts') {
+    promptsViewMode = mode;
+    localStorage.setItem('promptsViewMode', mode);
+  } else if (type === 'notes') {
+    notesViewMode = mode;
+    localStorage.setItem('notesViewMode', mode);
+  }
+}
+
+function setViewMode(type, mode) {
+  saveViewMode(type, mode);
+  updateViewModeButtons(type);
+  if (type === 'prompts' && currentTab === 'prompts') {
+    renderPrompts();
+  } else if (type === 'notes' && currentTab === 'notes') {
+    renderNotes();
+  }
+}
+
+function updateViewModeButtons(type) {
+  var mode = type === 'prompts' ? promptsViewMode : notesViewMode;
+  var prefix = type === 'prompts' ? 'prompts' : 'notes';
+  
+  // Remove active class from all buttons
+  document.querySelectorAll('.' + prefix + '-view-btn').forEach(function(btn) {
+    btn.classList.remove('active');
+  });
+  
+  // Add active class to current mode button
+  var activeBtn = document.getElementById(prefix + '-view-' + mode);
+  if (activeBtn) {
+    activeBtn.classList.add('active');
+  }
+}
+
+// ===== INITIALIZATION =====
+async function initializeApp() {
+  showLoadingOverlay();
+  try {
+    loadViewModes();
+    await loadAllData();
+    setupEventListeners();
+    switchTab('prompts');
+  } catch (error) {
+    showNotification('Lỗi khi tải dữ liệu: ' + error.message, 'error');
+  } finally {
+    hideLoadingOverlay();
+  }
+}
+
+// Setup event delegation for image clicks - Xử lý TẠI THỜI ĐIỂM CLICK
+// Chỉ normalize URL khi click, không normalize khi render HTML
+function setupImageClickHandlers() {
+  // Gắn event listener 1 lần duy nhất ở document.body để xử lý nội dung render động
+  document.body.addEventListener('click', function(e) {
+    var target = e.target;
+    var urlToOpen = null;
+    var isGoogleImage = false;
+    
+    // Xử lý click vào <img> tag
+    if (target.tagName === 'IMG') {
+      // Lấy URL từ data-url hoặc src
+      urlToOpen = target.getAttribute('data-url') || target.src;
+      
+      // Kiểm tra nếu là Google image URL
+      if (urlToOpen && urlToOpen.includes('lh3.googleusercontent.com')) {
+        isGoogleImage = true;
+      }
+    }
+    
+    // Xử lý click vào <a> tag bao quanh ảnh
+    if (target.tagName === 'A' && target.href) {
+      urlToOpen = target.href;
+      
+      // Kiểm tra nếu là Google image URL
+      if (urlToOpen.includes('lh3.googleusercontent.com')) {
+        isGoogleImage = true;
+      }
+    }
+    
+    // Nếu là Google image URL → xử lý normalize và mở
+    if (isGoogleImage && urlToOpen) {
+      // Ngăn chặn hành vi mặc định của browser
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Normalize URL: xóa =sXXX (ví dụ: =s220, =s400, =s800)
+      var cleanUrl = normalizeImageUrl(urlToOpen);
+      
+      // Mở URL đã được normalize trong tab mới
+      window.open(cleanUrl, '_blank');
+    }
+    
+    // Nếu không phải Google image → để browser xử lý bình thường (không làm gì)
+  }, true); // Use capture phase để bắt sớm hơn
+}
+
+// ===== TAB SWITCHING =====
+function switchTab(tabName) {
+  currentTab = tabName;
+  
+  // Update tab buttons
+  document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.classList.remove('active');
+  });
+  document.getElementById('tab-' + tabName).classList.add('active');
+  
+  // Update content visibility
+  document.querySelectorAll('.tab-content').forEach(function(content) {
+    content.classList.remove('active');
+  });
+  document.getElementById('content-' + tabName).classList.add('active');
+  
+  // Update add button visibility
+  document.querySelectorAll('.add-btn').forEach(function(btn) {
+    btn.style.display = 'none';
+  });
+  
+  // For recycle and settings tabs: skip all add-button logic entirely (no DOM access to add buttons)
+  if (tabName !== 'recycle' && tabName !== 'settings') {
+    if (tabName === 'tasks') {
+      var taskBtn = document.getElementById('btn-add-task');
+      if (taskBtn) taskBtn.style.display = 'block';
+    } else {
+      var addId = 'btn-add-' + tabName.substring(0, tabName.length - 1);
+      var addBtn = document.getElementById(addId);
+      if (addBtn) addBtn.style.display = 'block';
+    }
+  }
+  
+  renderCurrentTab();
+  
+  // Update view mode buttons
+  if (tabName === 'prompts') {
+    updateViewModeButtons('prompts');
+  } else if (tabName === 'notes') {
+    updateViewModeButtons('notes');
+  }
+}
+
+function renderCurrentTab() {
+  if (currentTab === 'prompts') {
+    renderPrompts();
+  } else if (currentTab === 'notes') {
+    renderNotes();
+  } else if (currentTab === 'accounts') {
+    renderAccounts();
+  } else if (currentTab === 'tasks') {
+    renderTasksCalendar();
+  } else if (currentTab === 'recycle') {
+    renderRecycleBin();
+  } else if (currentTab === 'settings') {
+    renderSettings();
+  }
+}
+
+// ===== PROMPTS RENDERING (3-LEVEL STRUCTURE) =====
+var collapsedPrompts = {}; // Store collapsed state for Level 0
+
+// Normalize Google Image URL - Remove resize parameter =sXXX
+function normalizeGoogleImageUrl(url) {
+  if (!url) return url;
+  if (!url.includes('lh3.googleusercontent.com')) return url;
+  // Remove =s\d+ pattern (e.g., =s220, =s400, =s500) but keep query parameters
+  // Pattern: =s followed by digits, before ? or end of string
+  return url.replace(/=s\d+/g, '');
+}
+
+// Normalize Google image URLs in HTML content
+function normalizeGoogleImageUrlsInHtml(html) {
+  if (!html) return html;
+  
+  // Create a temporary div to parse HTML
+  var temp = document.createElement('div');
+  temp.innerHTML = html;
+  
+  // Process all img tags
+  temp.querySelectorAll('img').forEach(function(img) {
+    if (img.src && img.src.includes('lh3.googleusercontent.com')) {
+      img.src = normalizeGoogleImageUrl(img.src);
+      if (img.getAttribute('data-url')) {
+        img.setAttribute('data-url', normalizeGoogleImageUrl(img.getAttribute('data-url')));
+      }
+    }
+  });
+  
+  // Process all anchor tags
+  temp.querySelectorAll('a').forEach(function(a) {
+    if (a.href && a.href.includes('lh3.googleusercontent.com')) {
+      a.href = normalizeGoogleImageUrl(a.href);
+    }
+  });
+  
+  return temp.innerHTML;
+}
+
+// ================= IMAGE HANDLING HELPERS =================
+// Fallback image when original fails
+var IMAGE_FALLBACK_URL = 'https://via.placeholder.com/600x400?text=Image+Unavailable';
+
+// Normalize a variety of image URLs (Google Drive, lh3, drive uc). Return better-loading URL when possible.
+function normalizeImageUrl(url) {
+  if (!url) return url;
+  url = url.trim();
+
+  // If already lh3 -> remove size params
+  if (url.includes('lh3.googleusercontent.com')) {
+    return url.replace(/=s\d+/g, '');
+  }
+
+  // Google Drive formats: /d/FILE_ID or id=FILE_ID
+  var m = url.match(/\/d\/([a-zA-Z0-9_-]+)/) || url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (m && m[1]) {
+    // Convert to lh3-style host for faster delivery (best-effort)
+    return 'https://lh3.googleusercontent.com/d/' + m[1];
+  }
+
+  // drive.google.com/uc?export=view&id=ID
+  var m2 = url.match(/uc\?export=view&id=([a-zA-Z0-9_-]+)/);
+  if (m2 && m2[1]) {
+    return 'https://lh3.googleusercontent.com/d/' + m2[1];
+  }
+
+  // Otherwise return original URL (Imgur, Cloudinary, etc.)
+  return url;
+}
+
+// Error handler with retry and fallback
+function handleImageError(img) {
+  try {
+    var retries = parseInt(img.getAttribute('data-retries') || '0', 10);
+    if (retries < 2) {
+      img.setAttribute('data-retries', retries + 1);
+      var src = img.getAttribute('data-src') || img.getAttribute('data-original-src') || img.src;
+      img.src = src + (src.indexOf('?') === -1 ? '?' : '&') + 'cb=' + Date.now();
+      return;
+    }
+  } catch (e) {}
+
+  img.onerror = null;
+  img.src = IMAGE_FALLBACK_URL;
+  img.classList.add('img-error');
+}
+
+// Lazy load images using IntersectionObserver; observes images with data-src
+function setupLazyLoadImages() {
+  var lazyImages = Array.prototype.slice.call(document.querySelectorAll('img[data-src]'));
+  if (lazyImages.length === 0) return;
+
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function(entries, observer) {
+      entries.forEach(function(entry) {
+        if (entry.isIntersecting) {
+          var img = entry.target;
+          var src = img.getAttribute('data-src');
+          if (src) {
+            img.onload = function() { img.classList.add('loaded'); };
+            img.onerror = function() { handleImageError(img); };
+            img.src = src;
+          }
+          observer.unobserve(img);
+        }
+      });
+    }, {rootMargin: '200px 0px'});
+
+    lazyImages.forEach(function(img) { io.observe(img); });
+  } else {
+    // Fallback: load immediately
+    lazyImages.forEach(function(img) {
+      var src = img.getAttribute('data-src');
+      if (src) {
+        img.onerror = function() { handleImageError(img); };
+        img.src = src;
+      }
+    });
+  }
+}
+
+// Helper to transform HTML content: normalize image URLs and set up data-src + lazy attributes
+function processImagesInHtml(html) {
+  if (!html) return html;
+  var temp = document.createElement('div');
+  temp.innerHTML = html;
+
+  temp.querySelectorAll('img').forEach(function(img) {
+    var original = img.getAttribute('data-url') || img.getAttribute('src') || '';
+    var normalized = normalizeImageUrl(original) || original;
+
+    // Preserve original
+    if (original) img.setAttribute('data-original-src', original);
+
+    img.setAttribute('data-src', normalized);
+    img.setAttribute('data-url', normalized);
+    img.setAttribute('loading', 'lazy');
+
+    // Use a tiny transparent placeholder to avoid immediate load
+    img.setAttribute('src', 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==');
+
+    // Ensure onerror calls our handler
+    img.setAttribute('onerror', 'this.onerror=null;handleImageError(this);');
+  });
+
+  temp.querySelectorAll('a').forEach(function(a) {
+    var href = a.getAttribute('href') || a.href || '';
+    if (href) {
+      var normalized = normalizeImageUrl(href);
+      a.setAttribute('href', normalized);
+    }
+  });
+
+  return temp.innerHTML;
+}
+
+function renderPrompts() {
+  var container = document.getElementById('prompts-container');
+  container.innerHTML = '';
+  
+  // Remove all view mode classes
+  container.classList.remove('view-grid', 'view-list');
+  
+  var filteredPrompts = filterItems(allPrompts, searchTermPrompts);
+  
+  // Get all Level 2 items for grid/list view
+  var allLevel2Items = filteredPrompts.filter(function(p) { return p.level === 2; });
+  
+  // If grid or list view, render only Level 2 items
+  if (promptsViewMode === 'grid' || promptsViewMode === 'list') {
+    if (allLevel2Items.length === 0) {
+      container.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>Không tìm thấy prompt</p></div>';
+      return;
+    }
+    
+    // Add view mode class
+    container.classList.add('view-' + promptsViewMode);
+    
+    // Sort: isPinned DESC → order ASC
+    allLevel2Items.sort(function(a, b) {
+      var aPinned = a.isPinned ? 1 : 0;
+      var bPinned = b.isPinned ? 1 : 0;
+      if (aPinned !== bPinned) return bPinned - aPinned; // Pinned first
+      return a.order - b.order;
+    });
+    
+    // Render all Level 2 items
+    allLevel2Items.forEach(function(item) {
+      var card = renderPromptCard(item, filteredPrompts);
+      container.appendChild(card);
+    });
+    
+    // Initialize lazy loading for images rendered in prompts
+    setupLazyLoadImages();
+    return;
+  }
+  
+  // Tree view - original logic
+  var level0Prompts = filteredPrompts.filter(function(p) { return p.level === 0; });
+  
+  if (level0Prompts.length === 0) {
+    container.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>Không tìm thấy prompt</p></div>';
+    return;
+  }
+  
+  // Sort: isPinned DESC → order ASC (chỉ trong cùng level 0)
+  level0Prompts.sort(function(a, b) {
+    var aPinned = a.isPinned ? 1 : 0;
+    var bPinned = b.isPinned ? 1 : 0;
+    if (aPinned !== bPinned) return bPinned - aPinned; // Pinned first
+    return a.order - b.order;
+  });
+  
+  level0Prompts.forEach(function(level0Prompt) {
+    var level0Box = renderPromptLevel0(level0Prompt, filteredPrompts);
+    container.appendChild(level0Box);
+  });
+  // Initialize lazy loading for images rendered in prompts
+  setupLazyLoadImages();
+}
+
+// Render Level 0 - Tiêu đề cấp 1 (Large Box)
+function renderPromptLevel0(level0Prompt, allItems) {
+  var level0Box = document.createElement('div');
+  level0Box.className = 'note-level-0';
+  level0Box.setAttribute('data-id', level0Prompt.id);
+  
+  var isCollapsed = collapsedPrompts[level0Prompt.id] === true;
+  
+  // Header
+  var header = document.createElement('div');
+  header.className = 'note-level-0-header';
+  header.innerHTML = 
+    '<div class="note-level-0-title">' +
+    '<i class="fas fa-folder"></i>' +
+    '<span>' + escapeHtml(level0Prompt.title || 'Untitled') + '</span>' +
+    '</div>' +
+    '<div class="note-level-0-actions">' +
+    '<button class="note-collapse-btn" onclick="togglePromptLevel0(\'' + level0Prompt.id + '\')">' +
+    (isCollapsed ? 'Phóng to' : 'Thu nhỏ') +
+    '</button>' +
+    '<div class="item-actions">' +
+    '<i class="fas fa-thumbtack ' + (level0Prompt.isPinned ? 'pinned' : '') + '" onclick="togglePin(\'prompts\', \'' + level0Prompt.id + '\', event)" title="Ghim"></i>' +
+    '<i class="fas fa-eye" onclick="viewItemContent(\'prompts\', \'' + level0Prompt.id + '\')"></i>' +
+    '<i class="fas fa-copy" onclick="copyItemText(\'prompts\', \'' + level0Prompt.id + '\')"></i>' +
+    '<i class="fas fa-edit" onclick="editItem(\'prompts\', \'' + level0Prompt.id + '\')"></i>' +
+    '<i class="fas fa-plus" onclick="addChildItem(\'prompts\', \'' + level0Prompt.id + '\')"></i>' +
+    '<i class="fas fa-trash" onclick="deleteItemConfirm(\'prompts\', \'' + level0Prompt.id + '\')"></i>' +
+    '</div>' +
+    '</div>';
+  level0Box.appendChild(header);
+  
+  // Content (Level 1 groups)
+  var content = document.createElement('div');
+  content.className = 'note-level-0-content' + (isCollapsed ? ' collapsed' : '');
+  
+  // Get Level 1 items (children of Level 0)
+  var level1Items = allItems.filter(function(p) { 
+    return p.parentId === level0Prompt.id && p.level === 1; 
+  });
+  // Sort: isPinned DESC → order ASC (chỉ trong cùng parentId + level)
+  level1Items.sort(function(a, b) {
+    var aPinned = a.isPinned ? 1 : 0;
+    var bPinned = b.isPinned ? 1 : 0;
+    if (aPinned !== bPinned) return bPinned - aPinned; // Pinned first
+    return a.order - b.order;
+  });
+  
+  if (level1Items.length > 0) {
+    level1Items.forEach(function(level1Item) {
+      var level1Group = renderPromptLevel1(level1Item, allItems);
+      content.appendChild(level1Group);
+    });
+  } else {
+    // If no Level 1, check if there are Level 2 items directly under Level 0
+    var directLevel2Items = allItems.filter(function(p) { 
+      return p.parentId === level0Prompt.id && p.level === 2; 
+    });
+    
+    if (directLevel2Items.length > 0) {
+      // Create a default Level 1 group for Level 2 items
+      var defaultLevel1Group = document.createElement('div');
+      defaultLevel1Group.className = 'note-level-1-group';
+      defaultLevel1Group.innerHTML = '<div class="note-level-1-title">Prompt</div>';
+      
+      var level2Grid = document.createElement('div');
+      level2Grid.className = 'note-level-2-grid';
+      
+      // Sort: isPinned DESC → order ASC (chỉ trong cùng parentId + level)
+      directLevel2Items.sort(function(a, b) {
+        var aPinned = a.isPinned ? 1 : 0;
+        var bPinned = b.isPinned ? 1 : 0;
+        if (aPinned !== bPinned) return bPinned - aPinned; // Pinned first
+        return a.order - b.order;
+      });
+      directLevel2Items.forEach(function(level2Item) {
+        var card = renderPromptCard(level2Item, allItems);
+        level2Grid.appendChild(card);
+      });
+      
+      defaultLevel1Group.appendChild(level2Grid);
+      content.appendChild(defaultLevel1Group);
+    }
+  }
+  
+  level0Box.appendChild(content);
+  return level0Box;
+}
+
+
+// Render Level 1 - Tiêu đề cấp 2 (Green Text Group)
+function renderPromptLevel1(level1Item, allItems) {
+  var level1Group = document.createElement('div');
+  level1Group.className = 'note-level-1-group';
+  
+  // Level 1 Title with actions
+  var titleWrapper = document.createElement('div');
+  titleWrapper.style.display = 'flex';
+  titleWrapper.style.justifyContent = 'space-between';
+  titleWrapper.style.alignItems = 'center';
+  titleWrapper.style.marginBottom = '15px';
+  
+  var title = document.createElement('div');
+  title.className = 'note-level-1-title';
+  title.textContent = escapeHtml(level1Item.title || 'Untitled');
+  titleWrapper.appendChild(title);
+  
+  // Add action buttons for Level 1
+  var actions = document.createElement('div');
+  actions.className = 'item-actions';
+  actions.style.opacity = '1';
+  actions.innerHTML = 
+    '<i class="fas fa-thumbtack ' + (level1Item.isPinned ? 'pinned' : '') + '" onclick="togglePin(\'prompts\', \'' + level1Item.id + '\', event)" title="Ghim"></i>' +
+    '<i class="fas fa-eye" onclick="viewItemContent(\'prompts\', \'' + level1Item.id + '\')"></i>' +
+    '<i class="fas fa-copy" onclick="copyItemText(\'prompts\', \'' + level1Item.id + '\')"></i>' +
+    '<i class="fas fa-edit" onclick="editItem(\'prompts\', \'' + level1Item.id + '\')"></i>' +
+    '<i class="fas fa-plus" onclick="addChildItem(\'prompts\', \'' + level1Item.id + '\')"></i>' +
+    '<i class="fas fa-trash" onclick="deleteItemConfirm(\'prompts\', \'' + level1Item.id + '\')"></i>';
+  titleWrapper.appendChild(actions);
+  
+  level1Group.appendChild(titleWrapper);
+  
+  // Get Level 2 items (children of Level 1)
+  var level2Items = allItems.filter(function(p) { 
+    return p.parentId === level1Item.id && p.level === 2; 
+  });
+
+  // Sort Level 2 items: isPinned DESC → order ASC
+  level2Items.sort(function(a, b) {
+    var aPinned = a.isPinned ? 1 : 0;
+    var bPinned = b.isPinned ? 1 : 0;
+    if (aPinned !== bPinned) return bPinned - aPinned; // Pinned first
+    return a.order - b.order;
+  });
+  
+  if (level2Items.length > 0) {
+    var level2Grid = document.createElement('div');
+    level2Grid.className = 'note-level-2-grid';
+    
+    level2Items.forEach(function(level2Item) {
+      var card = renderPromptCard(level2Item, allItems);
+      level2Grid.appendChild(card);
+    });
+    
+    level1Group.appendChild(level2Grid);
+  }
+  
+  return level1Group;
+}
+
+// Render Level 2 - Prompt Card
+function renderPromptCard(level2Item, allItems) {
+  var card = document.createElement('div');
+  card.className = 'note-card';
+  card.setAttribute('data-id', level2Item.id);
+  
+  var contentText = markdownToHtml(level2Item.content || '');
+  // Process images so Drive/Google URLs are normalized to lh3, set data-src for lazy loading and attach error handler
+  contentText = processImagesInHtml(contentText);
+  
+  // Level 2 (prompt) không có nút "+" vì chỉ có 3 cấp
+  var isQuickViewCollapsed = quickViewCollapsed[level2Item.id];
+  card.innerHTML = 
+    '<div class="note-card-header">' +
+    '<div class="note-card-title">' + escapeHtml(level2Item.title || 'Untitled') + '</div>' +
+    '<button class="quick-view-toggle" onclick="toggleQuickView(\'' + level2Item.id + '\', event)" title="Xem nhanh">' +
+    '<i class="fas fa-' + (isQuickViewCollapsed ? 'chevron-down' : 'chevron-up') + '"></i>' +
+    '</button>' +
+    '</div>' +
+    '<div class="note-card-content' + (isQuickViewCollapsed ? ' collapsed' : '') + '">' + contentText + '</div>' +
+    '' +
+    '<div class="note-card-actions">' +
+    '<i class="fas fa-thumbtack ' + (level2Item.isPinned ? 'pinned' : '') + '" onclick="togglePin(\'prompts\', \'' + level2Item.id + '\', event)" title="Ghim"></i>' +
+    '<i class="fas fa-eye" onclick="viewItemContent(\'prompts\', \'' + level2Item.id + '\')"></i>' +
+    '<i class="fas fa-copy" onclick="copyItemText(\'prompts\', \'' + level2Item.id + '\')"></i>' +
+    '<i class="fas fa-edit" onclick="editItem(\'prompts\', \'' + level2Item.id + '\')"></i>' +
+    '<i class="fas fa-trash" onclick="deleteItemConfirm(\'prompts\', \'' + level2Item.id + '\')"></i>' +
+    '</div>';
+  
+  // Insert tags as clickable chips (DOM-based)
+  if (level2Item.tags) {
+    var tagsArr = (level2Item.tags || '').toString().split(',');
+    var tagsContainer = document.createElement('div');
+    tagsContainer.className = 'item-tags';
+    tagsArr.forEach(function(t) {
+      t = (t || '').toString().toLowerCase().trim();
+      if (!t) return;
+      var chip = document.createElement('span');
+      chip.className = 'tag-chip';
+      chip.textContent = '#' + t;
+      chip.addEventListener('click', function(e) {
+        e.stopPropagation();
+        applyTagFilter('prompts', t);
+      });
+      tagsContainer.appendChild(chip);
+    });
+    var actionsEl = card.querySelector('.note-card-actions');
+    if (actionsEl) card.insertBefore(tagsContainer, actionsEl);
+    else card.appendChild(tagsContainer);
+  }
+
+  return card;
+}
+
+// Toggle collapse/expand for Level 0
+function togglePromptLevel0(level0Id) {
+  collapsedPrompts[level0Id] = !collapsedPrompts[level0Id];
+  renderPrompts(); // Re-render to update UI
+}
+
+// ===== NOTES RENDERING (3-LEVEL STRUCTURE) =====
+var collapsedNotes = {}; // Store collapsed state for Level 0
+
+function renderNotes() {
+  var container = document.getElementById('notes-container');
+  container.innerHTML = '';
+  
+  // Remove all view mode classes
+  container.classList.remove('view-grid', 'view-list');
+  
+  // Lọc bỏ items đã bị xóa
+  var activeNotes = filterDeletedItems(allNotes);
+  var filteredNotes = filterItems(activeNotes, searchTermNotes);
+  
+  // Get all Level 2 items for grid/list view
+  var allLevel2Items = filteredNotes.filter(function(n) { return n.level === 2; });
+  
+  // If grid or list view, render only Level 2 items
+  if (notesViewMode === 'grid' || notesViewMode === 'list') {
+    if (allLevel2Items.length === 0) {
+      container.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>Không tìm thấy ghi chú</p></div>';
+      return;
+    }
+    
+    // Add view mode class
+    container.classList.add('view-' + notesViewMode);
+    
+    // Sort: isPinned DESC → order ASC
+    allLevel2Items.sort(function(a, b) {
+      var aPinned = a.isPinned ? 1 : 0;
+      var bPinned = b.isPinned ? 1 : 0;
+      if (aPinned !== bPinned) return bPinned - aPinned; // Pinned first
+      return a.order - b.order;
+    });
+    
+    // Render all Level 2 items
+    allLevel2Items.forEach(function(item) {
+      var card = renderNoteCard(item, filteredNotes);
+      container.appendChild(card);
+    });
+    
+    // Initialize lazy loading for images rendered in notes
+    setupLazyLoadImages();
+    return;
+  }
+  
+  // Tree view - original logic
+  var level0Notes = filteredNotes.filter(function(n) { return n.level === 0; });
+  
+  if (level0Notes.length === 0) {
+    container.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>Không tìm thấy ghi chú</p></div>';
+    return;
+  }
+  
+  // Sort: isPinned DESC → order ASC (chỉ trong cùng level 0)
+  level0Notes.sort(function(a, b) {
+    var aPinned = a.isPinned ? 1 : 0;
+    var bPinned = b.isPinned ? 1 : 0;
+    if (aPinned !== bPinned) return bPinned - aPinned; // Pinned first
+    return a.order - b.order;
+  });
+  
+  level0Notes.forEach(function(level0Note) {
+    var level0Box = renderNoteLevel0(level0Note, filteredNotes);
+    container.appendChild(level0Box);
+  });
+  // Initialize lazy loading for images rendered in notes
+  setupLazyLoadImages();
+}
+
+// Render Level 0 - Tiêu đề cấp 1 (Large Box)
+function renderNoteLevel0(level0Note, allItems) {
+  var level0Box = document.createElement('div');
+  level0Box.className = 'note-level-0';
+  level0Box.setAttribute('data-id', level0Note.id);
+  
+  var isCollapsed = collapsedNotes[level0Note.id] === true;
+  
+  // Header
+  var header = document.createElement('div');
+  header.className = 'note-level-0-header';
+  header.innerHTML = 
+    '<div class="note-level-0-title">' +
+    '<i class="fas fa-folder"></i>' +
+    '<span>' + escapeHtml(level0Note.title || 'Untitled') + '</span>' +
+    '</div>' +
+    '<div class="note-level-0-actions">' +
+    '<button class="note-collapse-btn" onclick="toggleNoteLevel0(\'' + level0Note.id + '\')">' +
+    (isCollapsed ? '-Phóng to' : '-Thu nhỏ') + '-' +
+    '</button>' +
+    '<div class="item-actions">' +
+    '<i class="fas fa-thumbtack ' + (level0Note.isPinned ? 'pinned' : '') + '" onclick="togglePin(\'notes\', \'' + level0Note.id + '\', event)" title="Ghim"></i>' +
+    '<i class="fas fa-eye" onclick="viewItemContent(\'notes\', \'' + level0Note.id + '\')"></i>' +
+    '<i class="fas fa-copy" onclick="copyItemText(\'notes\', \'' + level0Note.id + '\')"></i>' +
+    '<i class="fas fa-edit" onclick="editItem(\'notes\', \'' + level0Note.id + '\')"></i>' +
+    '<i class="fas fa-plus" onclick="addChildItem(\'notes\', \'' + level0Note.id + '\')"></i>' +
+    '<i class="fas fa-trash" onclick="deleteItemConfirm(\'notes\', \'' + level0Note.id + '\')"></i>' +
+    '</div>' +
+    '</div>';
+  level0Box.appendChild(header);
+  
+  // Content (Level 1 groups)
+  var content = document.createElement('div');
+  content.className = 'note-level-0-content' + (isCollapsed ? ' collapsed' : '');
+  
+  // Get Level 1 items (children of Level 0)
+  var level1Items = allItems.filter(function(n) { 
+    return n.parentId === level0Note.id && n.level === 1; 
+  });
+  // Sort: isPinned DESC → order ASC (chỉ trong cùng parentId + level)
+  level1Items.sort(function(a, b) {
+    var aPinned = a.isPinned ? 1 : 0;
+    var bPinned = b.isPinned ? 1 : 0;
+    if (aPinned !== bPinned) return bPinned - aPinned; // Pinned first
+    return a.order - b.order;
+  });
+  
+  if (level1Items.length > 0) {
+    level1Items.forEach(function(level1Item) {
+      var level1Group = renderNoteLevel1(level1Item, allItems);
+      content.appendChild(level1Group);
+    });
+  } else {
+    // If no Level 1, check if there are Level 2 items directly under Level 0
+    var directLevel2Items = allItems.filter(function(n) { 
+      return n.parentId === level0Note.id && n.level === 2; 
+    });
+    
+    if (directLevel2Items.length > 0) {
+      // Create a default Level 1 group for Level 2 items
+      var defaultLevel1Group = document.createElement('div');
+      defaultLevel1Group.className = 'note-level-1-group';
+      defaultLevel1Group.innerHTML = '<div class="note-level-1-title">Ghi chú</div>';
+      
+      var level2Grid = document.createElement('div');
+      level2Grid.className = 'note-level-2-grid';
+      
+      // Sort: isPinned DESC → order ASC (chỉ trong cùng parentId + level)
+      directLevel2Items.sort(function(a, b) {
+        var aPinned = a.isPinned ? 1 : 0;
+        var bPinned = b.isPinned ? 1 : 0;
+        if (aPinned !== bPinned) return bPinned - aPinned; // Pinned first
+        return a.order - b.order;
+      });
+      directLevel2Items.forEach(function(level2Item) {
+        var card = renderNoteCard(level2Item, allItems);
+        level2Grid.appendChild(card);
+      });
+      
+      defaultLevel1Group.appendChild(level2Grid);
+      content.appendChild(defaultLevel1Group);
+    }
+  }
+  
+  level0Box.appendChild(content);
+  return level0Box;
+}
+
+// Render Level 1 - Tiêu đề cấp 2 (Green Text Group)
+function renderNoteLevel1(level1Item, allItems) {
+  var level1Group = document.createElement('div');
+  level1Group.className = 'note-level-1-group';
+  
+  // Level 1 Title with actions
+  var titleWrapper = document.createElement('div');
+  titleWrapper.style.display = 'flex';
+  titleWrapper.style.justifyContent = 'space-between';
+  titleWrapper.style.alignItems = 'center';
+  titleWrapper.style.marginBottom = '15px';
+  
+  var title = document.createElement('div');
+  title.className = 'note-level-1-title';
+  title.textContent = escapeHtml(level1Item.title || 'Untitled');
+  titleWrapper.appendChild(title);
+  
+  // Add action buttons for Level 1
+  var actions = document.createElement('div');
+  actions.className = 'item-actions';
+  actions.style.opacity = '1';
+  actions.innerHTML = 
+    '<i class="fas fa-thumbtack ' + (level1Item.isPinned ? 'pinned' : '') + '" onclick="togglePin(\'notes\', \'' + level1Item.id + '\', event)" title="Ghim"></i>' +
+    '<i class="fas fa-eye" onclick="viewItemContent(\'notes\', \'' + level1Item.id + '\')"></i>' +
+    '<i class="fas fa-copy" onclick="copyItemText(\'notes\', \'' + level1Item.id + '\')"></i>' +
+    '<i class="fas fa-edit" onclick="editItem(\'notes\', \'' + level1Item.id + '\')"></i>' +
+    '<i class="fas fa-plus" onclick="addChildItem(\'notes\', \'' + level1Item.id + '\')"></i>' +
+    '<i class="fas fa-trash" onclick="deleteItemConfirm(\'notes\', \'' + level1Item.id + '\')"></i>';
+  titleWrapper.appendChild(actions);
+  
+  level1Group.appendChild(titleWrapper);
+  
+  // Get Level 2 items (children of Level 1)
+  var level2Items = allItems.filter(function(n) { 
+    return n.parentId === level1Item.id && n.level === 2; 
+  });
+  level2Items.sort(function(a, b) { return a.order - b.order; });
+  
+  if (level2Items.length > 0) {
+    var level2Grid = document.createElement('div');
+    level2Grid.className = 'note-level-2-grid';
+    
+    level2Items.forEach(function(level2Item) {
+      var card = renderNoteCard(level2Item, allItems);
+      level2Grid.appendChild(card);
+    });
+    
+    level1Group.appendChild(level2Grid);
+  }
+  
+  return level1Group;
+}
+
+// Render Level 2 - Ghi chú Card
+function renderNoteCard(level2Item, allItems) {
+  var card = document.createElement('div');
+  card.className = 'note-card';
+  card.setAttribute('data-id', level2Item.id);
+  
+  var contentText = markdownToHtml(level2Item.content || '');
+  // Process images for lazy loading and URL normalization
+  contentText = processImagesInHtml(contentText);
+  
+  // Level 2 (ghi chú) không có nút "+" vì chỉ có 3 cấp
+  var isQuickViewCollapsed = quickViewCollapsed[level2Item.id];
+  card.innerHTML = 
+    '<div class="note-card-header">' +
+    '<div class="note-card-title">' + escapeHtml(level2Item.title || 'Untitled') + '</div>' +
+    '<button class="quick-view-toggle" onclick="toggleQuickView(\'' + level2Item.id + '\', event)" title="Xem nhanh">' +
+    '<i class="fas fa-' + (isQuickViewCollapsed ? 'chevron-down' : 'chevron-up') + '"></i>' +
+    '</button>' +
+    '</div>' +
+    '<div class="note-card-content' + (isQuickViewCollapsed ? ' collapsed' : '') + '">' + contentText + '</div>' +
+    '<div class="note-card-actions">' +
+    '<i class="fas fa-thumbtack ' + (level2Item.isPinned ? 'pinned' : '') + '" onclick="togglePin(\'notes\', \'' + level2Item.id + '\', event)" title="Ghim"></i>' +
+    '<i class="fas fa-eye" onclick="viewItemContent(\'notes\', \'' + level2Item.id + '\')"></i>' +
+    '<i class="fas fa-copy" onclick="copyItemText(\'notes\', \'' + level2Item.id + '\')"></i>' +
+    '<i class="fas fa-edit" onclick="editItem(\'notes\', \'' + level2Item.id + '\')"></i>' +
+    '<i class="fas fa-trash" onclick="deleteItemConfirm(\'notes\', \'' + level2Item.id + '\')"></i>' +
+    '</div>';
+  
+  return card;
+}
+
+// Toggle collapse/expand for Level 0
+function toggleNoteLevel0(level0Id) {
+  collapsedNotes[level0Id] = !collapsedNotes[level0Id];
+  renderNotes(); // Re-render to update UI
+}
+
+// ===== ACCOUNTS RENDERING (CARD FORMAT) =====
+function renderAccounts() {
+  var container = document.getElementById('accounts-container');
+  container.innerHTML = '';
+  
+  var filteredAccounts = filterItems(allAccounts, searchTermAccounts);
+  var rootAccounts = filteredAccounts.filter(function(a) { return a.level === 0; });
+  
+  if (rootAccounts.length === 0) {
+    container.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>No accounts found</p></div>';
+    return;
+  }
+  
+  rootAccounts.forEach(function(account) {
+    var column = createAccountColumn(account, filteredAccounts);
+    container.appendChild(column);
+  });
+}
+
+function createAccountColumn(rootAccount, allItems) {
+  var column = document.createElement('div');
+  column.className = 'account-column';
+  
+  var header = document.createElement('div');
+  header.className = 'account-column-header';
+  
+  var displayTitle = rootAccount.accountType || rootAccount.notes || 'Untitled';
+  
+  header.innerHTML = '<h3><i class="fas fa-folder"></i> ' + escapeHtml(displayTitle) + '</h3>' +
+    '<div class="item-actions">' +
+    '<i class="fas fa-copy" onclick="copyItemText(\'accounts\', \'' + rootAccount.id + '\')"></i>' +
+    '<i class="fas fa-edit" onclick="editItem(\'accounts\', \'' + rootAccount.id + '\')"></i>' +
+    '<i class="fas fa-plus" onclick="addChildItem(\'accounts\', \'' + rootAccount.id + '\')"></i>' +
+    '<i class="fas fa-trash" onclick="deleteItemConfirm(\'accounts\', \'' + rootAccount.id + '\')"></i>' +
+    '</div>';
+  column.appendChild(header);
+  
+  var children = allItems.filter(function(a) { return a.parentId === rootAccount.id; });
+  children.sort(function(a, b) { return a.order - b.order; });
+  
+  if (children.length > 0) {
+    var table = createAccountTable(children, allItems);
+    column.appendChild(table);
+  }
+  
+  return column;
+}
+
+function createAccountTable(accounts, allItems) {
+  var tableContainer = document.createElement('div');
+  tableContainer.className = 'account-table-container';
+  
+  var table = document.createElement('table');
+  table.className = 'account-table';
+  
+  var tbody = document.createElement('tbody');
+  
+  accounts.forEach(function(account) {
+    addAccountTableRow(tbody, account, allItems, 0);
+  });
+  
+  table.appendChild(tbody);
+  tableContainer.appendChild(table);
+  
+  return tableContainer;
+}
+
+function addAccountTableRow(tbody, account, allItems, level) {
+  var tr = document.createElement('tr');
+  tr.setAttribute('data-id', account.id);
+  tr.setAttribute('data-username', account.username || '');
+  tr.setAttribute('data-password', account.password || '');
+  tr.setAttribute('data-phone', account.phone || '');
+  
+  var indent = '';
+  for (var i = 0; i < level; i++) {
+    indent += '&nbsp;&nbsp;&nbsp;&nbsp;';
+  }
+  
+  var displayName = account.username || account.accountType || 'Untitled';
+  var maskedUsername = maskText(account.username, 'username');
+  var maskedPassword = maskText(account.password, 'password');
+  var maskedPhone = maskText(account.phone, 'phone');
+  
+  var actionsHtml = '<i class="fas fa-copy" onclick="copyItemText(\'accounts\', \'' + account.id + '\')"></i>' +
+    '<i class="fas fa-edit" onclick="editItem(\'accounts\', \'' + account.id + '\')"></i>' +
+    '<i class="fas fa-trash" onclick="deleteItemConfirm(\'accounts\', \'' + account.id + '\')"></i>';
+  
+  tr.innerHTML = '<td class="name-col">' + indent +
+    '<i class="fas fa-user"></i> ' +
+    '<span class="data-display" data-type="username" data-visible="false">' + maskedUsername + '</span>' +
+    (account.username ? ' <i class="fas fa-eye data-toggle" onclick="toggleDataInTable(this)"></i>' : '') +
+    '</td>' +
+    '<td class="pass-col">' +
+    '<i class="fas fa-key"></i> ' +
+    '<span class="data-display" data-type="password" data-visible="false">' + maskedPassword + '</span>' +
+    (account.password ? ' <i class="fas fa-eye data-toggle" onclick="toggleDataInTable(this)"></i>' : '') +
+    '</td>' +
+    '<td class="phone-col">' +
+    '<i class="fas fa-phone"></i> ' +
+    '<span class="data-display" data-type="phone" data-visible="false">' + maskedPhone + '</span>' +
+    (account.phone ? ' <i class="fas fa-eye data-toggle" onclick="toggleDataInTable(this)"></i>' : '') +
+    '</td>' +
+    '<td class="notes-col"><i class="fas fa-sticky-note"></i> ' + (account.notes ? markdownToHtml(account.notes) : '-') + '</td>' +
+    '<td class="actions-col">' + actionsHtml + '</td>';
+  
+  tbody.appendChild(tr);
+  
+  // Add children
+  var children = allItems.filter(function(a) { return a.parentId === account.id; });
+  if (children.length > 0) {
+    children.sort(function(a, b) { return a.order - b.order; });
+    children.forEach(function(child) {
+      addAccountTableRow(tbody, child, allItems, level + 1);
+    });
+  }
+}
+
+// Mask password: show first 2 and last 2 chars, hide middle with ****
+function toggleDataInTable(icon) {
+  var row = icon.closest('tr');
+  var cell = icon.closest('td');
+  var dataSpan = cell.querySelector('.data-display');
+  var dataType = dataSpan.getAttribute('data-type');
+  var actualData = row.getAttribute('data-' + dataType);
+  var isVisible = dataSpan.getAttribute('data-visible') === 'true';
+  
+  if (isVisible) {
+    dataSpan.textContent = maskText(actualData, dataType);
+    dataSpan.setAttribute('data-visible', 'false');
+    icon.classList.remove('fa-eye-slash');
+    icon.classList.add('fa-eye');
+  } else {
+    dataSpan.textContent = actualData;
+    dataSpan.setAttribute('data-visible', 'true');
+    icon.classList.remove('fa-eye');
+    icon.classList.add('fa-eye-slash');
+  }
+}
+
+function maskText(text, type) {
+  if (!text) return '-';
+  if (text.length <= 4) return '****';
+  
+  var first = text.substring(0, 2);
+  var last = text.substring(text.length - 2);
+  var middle = '****';
+  
+  return first + middle + last;
+}
+
+// Toggle password visibility in table
+function togglePasswordInTable(icon) {
+  var row = icon.closest('tr');
+  var passwordSpan = row.querySelector('.password-display');
+  var actualPassword = row.getAttribute('data-password');
+  var isVisible = passwordSpan.getAttribute('data-visible') === 'true';
+  
+  if (isVisible) {
+    passwordSpan.textContent = toggleDataInTable(actualPassword);
+    passwordSpan.setAttribute('data-visible', 'false');
+    icon.classList.remove('fa-eye-slash');
+    icon.classList.add('fa-eye');
+  } else {
+    passwordSpan.textContent = actualPassword;
+    passwordSpan.setAttribute('data-visible', 'true');
+    icon.classList.remove('fa-eye');
+    icon.classList.add('fa-eye-slash');
+  }
+}
+
+// ===== FILTERING =====
+function filterItems(items, searchTerm) {
+  if (!searchTerm) return items;
+  
+  var matchedIds = []; // ← THÊM
+  
+  // If searchTerm starts with '#', perform tag search
+  if (searchTerm.charAt(0) === '#') {
+    var tag = searchTerm.substring(1).toLowerCase();
+    if (!tag) return items;
+    items.forEach(function(item) {
+      var tagsStr = (item.tags || '').toString().toLowerCase();
+      var tagsArr = tagsStr ? tagsStr.split(',') : [];
+      if (tagsArr.indexOf(tag) !== -1) {
+        matchedIds.push(item.id);
+        var currentParentId = item.parentId;
+        while (currentParentId) {
+          if (matchedIds.indexOf(currentParentId) === -1) {
+            matchedIds.push(currentParentId);
+          }
+          var parent = items.find(function(i) { return i.id === currentParentId; });
+          currentParentId = parent ? parent.parentId : null;
+        }
+      }
+    });
+  } else {
+    // Tìm các items match search term in title/content/etc.
+    items.forEach(function(item) {
+      var searchableText = (item.title || '') + ' ' + 
+                          (item.content || '') + ' ' + 
+                          (item.username || '') + ' ' +
+                          (item.accountType || '') + ' ' +
+                          (item.notes || '');
+      if (searchableText.toLowerCase().indexOf(searchTerm) !== -1) {
+        matchedIds.push(item.id);
+        // Nếu match, thêm luôn tất cả parent
+        var currentParentId = item.parentId;
+        while (currentParentId) {
+          if (matchedIds.indexOf(currentParentId) === -1) {
+            matchedIds.push(currentParentId);
+          }
+          var parent = items.find(function(i) { return i.id === currentParentId; });
+          currentParentId = parent ? parent.parentId : null;
+        }
+      }
+    });
+  }
+  
+  // ← THAY ĐỔI: Return items có ID trong matchedIds
+  return items.filter(function(item) {
+    return matchedIds.indexOf(item.id) !== -1;
+  });
+}
+
+// Normalize tags on client: lowercase, trim, split/join, unique
+function normalizeTagsClient(tags) {
+  if (!tags && tags !== 0) return '';
+  var arr = [];
+  try {
+    arr = tags.toString().split(',');
+  } catch (e) {
+    return '';
+  }
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < arr.length; i++) {
+    var t = (arr[i] || '').toString().toLowerCase().trim();
+    if (!t) continue;
+    if (t.charAt(0) === '#') t = t.substring(1);
+    if (!t) continue;
+    if (!seen[t]) {
+      seen[t] = true;
+      out.push(t);
+    }
+  }
+  return out.join(',');
+}
+
+// Apply tag filter when clicking a tag chip
+function applyTagFilter(type, tag) {
+  if (!tag) return;
+  tag = tag.toString().toLowerCase().trim();
+  if (!tag) return;
+  if (type === 'prompts') {
+    searchTermPrompts = '#' + tag;
+    var input = document.getElementById('search-prompts');
+    if (input) input.value = '#' + tag;
+    renderPrompts();
+  } else if (type === 'notes') {
+    searchTermNotes = '#' + tag;
+    var input2 = document.getElementById('search-notes');
+    if (input2) input2.value = '#' + tag;
+    renderNotes();
+  }
+}
+
+// ===== MODAL OPERATIONS =====
+function showAddModal(type) {
+  closeModal();
+  
+  var modal = document.getElementById('modal-' + type.substring(0, type.length - 1));
+  var form = modal.querySelector('form');
+  form.reset();
+  if (type === 'prompts' || type === 'notes') {
+    var contentId = type === 'prompts' ? 'prompt-content' : 'note-content';
+    document.getElementById(contentId).innerHTML = '';
+  } else if (type === 'accounts') {
+    document.getElementById('account-notes').innerHTML = '';
+  }
+  form.removeAttribute('data-id');
+  form.removeAttribute('data-parent-id');
+  form.removeAttribute('data-parent-account-type');
+  
+  // Show Account Type field for root accounts
+  if (type === 'accounts') {
+    var accountTypeGroup = modal.querySelector('[name="accountType"]').closest('.form-group');
+    accountTypeGroup.style.display = 'block';
+    
+    // Hide username, password, phone fields for root account groups
+    var usernameGroup = modal.querySelector('[name="username"]').closest('.form-group');
+    usernameGroup.style.display = 'none';
+    
+    var passwordGroup = modal.querySelector('[name="password"]').closest('.form-group');
+    passwordGroup.style.display = 'none';
+    
+    var phoneGroup = modal.querySelector('[name="phone"]').closest('.form-group');
+    phoneGroup.style.display = 'none';
+    
+    // Show notes field
+    var notesGroup = modal.querySelector('[name="notes"]').closest('.form-group');
+    notesGroup.style.display = 'block';
+    
+    // Reset password input to type password
+    var passwordInput = modal.querySelector('#account-password');
+    if (passwordInput) {
+      passwordInput.type = 'password';
+    }
+    var passwordIcon = modal.querySelector('.password-toggle-icon');
+    if (passwordIcon) {
+      passwordIcon.classList.remove('fa-eye-slash');
+      passwordIcon.classList.add('fa-eye');
+    }
+  }
+
+  if (type === 'prompts') {
+    setupTextFormatting('prompt-content');
+  } else if (type === 'notes') {
+    setupTextFormatting('note-content');
+  } else if (type === 'accounts') {
+    setupTextFormatting('account-notes');
+  }
+  
+  // Hiển thị thông tin level cho Notes
+  var modalTitle = 'Thêm ' + capitalizeFirst(type.substring(0, type.length - 1)) + ' mới';
+  if (type === 'notes') {
+    modalTitle += ' (Tiêu đề cấp 1)';
+  }
+  modal.querySelector('.modal-title').textContent = modalTitle;
+  modal.style.display = 'flex';
+
+  // Reset undo history when opening modal
+  tableUndoHistory = [];
+}
+
+function addChildItem(type, parentId) {
+  var singularType = type.substring(0, type.length - 1);
+  var items = type === 'prompts' ? allPrompts : (type === 'notes' ? allNotes : allAccounts);
+  var parentItem = items.find(function(i) { return i.id === parentId; });
+  
+  // Kiểm tra level của parent để xác định level con sẽ tạo
+  if (type === 'notes' && parentItem) {
+    var parentLevel = parentItem.level || 0;
+    if (parentLevel >= 2) {
+      showNotification('Không thể thêm cấp con vào ghi chú (chỉ có 3 cấp)', 'error');
+      return;
+    }
+  }
+  
+  var modal = document.getElementById('modal-' + singularType);
+  var form = modal.querySelector('form');
+  
+  form.reset();
+  form.removeAttribute('data-id');
+  form.setAttribute('data-parent-id', parentId);
+  
+  // THÊM PHẦN NÀY - Clear contenteditable divs
+  if (type === 'prompts') {
+    document.getElementById('prompt-content').innerHTML = '';
+  } else if (type === 'notes') {
+    document.getElementById('note-content').innerHTML = '';
+  } else if (type === 'accounts') {
+    document.getElementById('account-notes').innerHTML = '';
+  }
+  
+  // Set modal title with parent name and level info
+  var parentName = '';
+  var levelInfo = '';
+  
+  if (type === 'accounts') {
+    parentName = parentItem ? (parentItem.accountType || parentItem.username || 'Parent') : 'Parent';
+    
+    // Hide Account Type field for child accounts
+    var accountTypeGroup = modal.querySelector('[name="accountType"]').closest('.form-group');
+    accountTypeGroup.style.display = 'none';
+    
+    // Show username, password, phone, notes fields
+    var usernameGroup = modal.querySelector('[name="username"]').closest('.form-group');
+    usernameGroup.style.display = 'block';
+    
+    var passwordGroup = modal.querySelector('[name="password"]').closest('.form-group');
+    passwordGroup.style.display = 'block';
+    
+    var phoneGroup = modal.querySelector('[name="phone"]').closest('.form-group');
+    phoneGroup.style.display = 'block';
+    
+    var notesGroup = modal.querySelector('[name="notes"]').closest('.form-group');
+    notesGroup.style.display = 'block';
+    
+    // Show required mark for username and password
+    var usernameRequired = modal.querySelector('.username-required');
+    if (usernameRequired) {
+      usernameRequired.style.display = 'inline';
+    }
+    
+    var passwordRequired = modal.querySelector('.password-required');
+    if (passwordRequired) {
+      passwordRequired.style.display = 'inline';
+    }
+    
+    // Reset password input to type password
+    var passwordInput = modal.querySelector('#account-password');
+    if (passwordInput) {
+      passwordInput.type = 'password';
+    }
+    var passwordIcon = modal.querySelector('.password-toggle-icon');
+    if (passwordIcon) {
+      passwordIcon.classList.remove('fa-eye-slash');
+      passwordIcon.classList.add('fa-eye');
+    }
+    
+    // Store parent account type in form
+    if (parentItem && parentItem.accountType) {
+      form.setAttribute('data-parent-account-type', parentItem.accountType);
+    }
+  } else if (type === 'notes') {
+    parentName = parentItem ? (parentItem.title || 'Parent') : 'Parent';
+    var parentLevel = parentItem ? (parentItem.level || 0) : 0;
+    
+    // Hiển thị thông tin level
+    if (parentLevel === 0) {
+      levelInfo = ' (Thêm Tiêu đề cấp 2)';
+    } else if (parentLevel === 1) {
+      levelInfo = ' (Thêm Ghi chú)';
+    }
+  } else {
+    parentName = parentItem ? (parentItem.title || 'Parent') : 'Parent';
+  }
+  
+  modal.querySelector('.modal-title').textContent = 'Thêm vào: ' + parentName + levelInfo;
+  modal.style.display = 'flex';
+}
+
+function editItem(type, itemId) {
+  var singularType = type.substring(0, type.length - 1);
+  var items = type === 'prompts' ? allPrompts : (type === 'notes' ? allNotes : allAccounts);
+  var item = items.find(function(i) { return i.id === itemId; });
+  
+  if (!item) return;
+  
+  var modal = document.getElementById('modal-' + singularType);
+  var form = modal.querySelector('form');
+  
+  form.setAttribute('data-id', itemId);
+  form.removeAttribute('data-parent-id');
+  form.removeAttribute('data-parent-account-type');
+  
+  if (type === 'accounts') {
+    // If editing root account (group) - show only accountType and notes
+    if (item.level === 0) {
+      var accountTypeGroup = modal.querySelector('[name="accountType"]').closest('.form-group');
+      accountTypeGroup.style.display = 'block';
+      
+      var usernameGroup = modal.querySelector('[name="username"]').closest('.form-group');
+      usernameGroup.style.display = 'none';
+      
+      var passwordGroup = modal.querySelector('[name="password"]').closest('.form-group');
+      passwordGroup.style.display = 'none';
+      
+      var phoneGroup = modal.querySelector('[name="phone"]').closest('.form-group');
+      phoneGroup.style.display = 'none';
+      
+      var notesGroup = modal.querySelector('[name="notes"]').closest('.form-group');
+      notesGroup.style.display = 'block';
+    } else {
+      // Editing child account - HIDE accountType, show all other fields
+      var accountTypeGroup = modal.querySelector('[name="accountType"]').closest('.form-group');
+      accountTypeGroup.style.display = 'none'; // ẨN LOẠI TÀI KHOẢN
+      
+      var usernameGroup = modal.querySelector('[name="username"]').closest('.form-group');
+      usernameGroup.style.display = 'block';
+      
+      var passwordGroup = modal.querySelector('[name="password"]').closest('.form-group');
+      passwordGroup.style.display = 'block';
+      
+      var phoneGroup = modal.querySelector('[name="phone"]').closest('.form-group');
+      phoneGroup.style.display = 'block';
+      
+      var notesGroup = modal.querySelector('[name="notes"]').closest('.form-group');
+      notesGroup.style.display = 'block';
+      
+      // Store current accountType to preserve it
+      form.setAttribute('data-current-account-type', item.accountType); // LƯU ACCOUNT TYPE
+    }
+    
+    // Hide required marks when editing
+    var usernameRequired = modal.querySelector('.username-required');
+    if (usernameRequired) {
+      usernameRequired.style.display = 'none';
+    }
+    
+    var passwordRequired = modal.querySelector('.password-required');
+    if (passwordRequired) {
+      passwordRequired.style.display = 'none';
+    }
+    
+    // Reset password input to type password
+    var passwordInput = modal.querySelector('#account-password');
+    if (passwordInput) {
+      passwordInput.type = 'password';
+    }
+    var passwordIcon = modal.querySelector('.password-toggle-icon');
+    if (passwordIcon) {
+      passwordIcon.classList.remove('fa-eye-slash');
+      passwordIcon.classList.add('fa-eye');
+    }
+    
+    form.querySelector('[name="accountType"]').value = item.accountType || '';
+    form.querySelector('[name="username"]').value = item.username || '';
+    form.querySelector('[name="password"]').value = item.password || '';
+    form.querySelector('[name="phone"]').value = item.phone || '';
+    document.getElementById('account-notes').innerHTML = markdownToHtml(item.notes || '');
+  } else {
+    form.querySelector('[name="title"]').value = item.title || '';
+    document.getElementById(singularType + '-content').innerHTML = markdownToHtml(item.content || '');
+    // Prefill tags if present (for prompts/notes)
+    var tagsInput = form.querySelector('[name="tags"]');
+    if (tagsInput) tagsInput.value = item.tags || '';
+  }
+
+  // Setup text formatting
+  if (type === 'prompts') {
+    setupTextFormatting('prompt-content');
+  } else if (type === 'notes') {
+    setupTextFormatting('note-content');
+  } else if (type === 'accounts') {
+    setupTextFormatting('account-notes');
+  }
+  
+  modal.querySelector('.modal-title').textContent = 'Sửa ' + capitalizeFirst(singularType);
+  modal.style.display = 'flex';
+  
+  // Reset undo history when editing
+  tableUndoHistory = [];
+}
+
+function closeModal() {
+  document.querySelectorAll('.modal').forEach(function(modal) {
+    modal.style.display = 'none';
+  });
+}
+
+// ===== CRUD OPERATIONS =====
+async function savePrompt() {
+  var form = document.getElementById('form-prompt');
+  var itemId = form.getAttribute('data-id');
+  var parentId = form.getAttribute('data-parent-id') || '';
+  
+  var title = form.querySelector('[name="title"]').value.trim();
+  var content = htmlToMarkdown(document.getElementById('prompt-content').innerHTML);
+  var tags = (form.querySelector('[name="tags"]') && form.querySelector('[name="tags"]').value.trim()) || '';
+  tags = normalizeTagsClient(tags);
+  
+  if (!title) {
+    showNotification('Vui lòng nhập tiêu đề', 'error');
+    return;
+  }
+  
+  closeModal();
+  
+  if (itemId) {
+    await updateItemOptimistic('prompts', itemId, {title: title, content: content, tags: tags});
+  } else {
+    var newItem = {
+      id: 'P' + Date.now(),
+      parentId: parentId,
+      title: title,
+      content: content,
+      tags: tags,
+      level: calculateLevel(allPrompts, parentId), // THAY ĐỔI Ở ĐÂY
+      order: getNextOrder(allPrompts, parentId)
+    };
+    await createItemOptimistic('prompts', newItem);
+  }
+}
+
+async function saveNote() {
+  var form = document.getElementById('form-note');
+  var itemId = form.getAttribute('data-id');
+  var parentId = form.getAttribute('data-parent-id') || '';
+  
+  var title = form.querySelector('[name="title"]').value.trim();
+  var content = htmlToMarkdown(document.getElementById('note-content').innerHTML);
+  var tags = (form.querySelector('[name="tags"]') && form.querySelector('[name="tags"]').value.trim()) || '';
+  tags = normalizeTagsClient(tags);
+  
+  if (!title) {
+    showNotification('Please enter a title', 'error');
+    return;
+  }
+  
+  closeModal();
+  
+  if (itemId) {
+    await updateItemOptimistic('notes', itemId, {title: title, content: content, tags: tags});
+  } else {
+    // var now = new Date().toISOString();
+    var newItem = {
+      id: 'N' + Date.now(),
+      parentId: parentId,
+      title: title,
+      content: content,
+      tags: tags,
+      level: calculateLevel(allNotes, parentId),
+      order: getNextOrder(allNotes, parentId)
+      // createdAt: now,
+      // updatedAt: now
+    };
+    await createItemOptimistic('notes', newItem);
+  }
+}
+
+async function saveAccount() {
+  var form = document.getElementById('form-account');
+  var itemId = form.getAttribute('data-id');
+  var parentId = form.getAttribute('data-parent-id') || '';
+  var parentAccountType = form.getAttribute('data-parent-account-type') || '';
+  var currentAccountType = form.getAttribute('data-current-account-type') || '';
+  
+  var accountType = form.querySelector('[name="accountType"]').value.trim();
+  var username = form.querySelector('[name="username"]').value.trim();
+  var password = form.querySelector('[name="password"]').value.trim();
+  var phone = form.querySelector('[name="phone"]').value.trim();
+  var notes = htmlToMarkdown(document.getElementById('account-notes').innerHTML);
+  
+  // If adding/editing child item, use parent's or current account type
+  if (parentId && parentAccountType) {
+    accountType = parentAccountType; 
+  } else if (itemId && currentAccountType) {
+    accountType = currentAccountType; 
+  }
+  
+  // Validation
+  if (parentId && !itemId) {
+    // Adding child account: need username and password >= 6 chars
+    if (!username) {
+      showNotification('Vui lòng nhập tên đăng nhập', 'error');
+      return;
+    }
+    if (!password) {
+      showNotification('Vui lòng nhập mật khẩu', 'error');
+      return;
+    }
+    if (password.length < 6) {
+      showNotification('Mật khẩu phải có ít nhất 6 ký tự', 'error');
+      return;
+    }
+  } else if (!itemId) {
+    // Adding root account (group): only need accountType
+    if (!accountType) {
+      showNotification('Vui lòng nhập loại tài khoản', 'error');
+      return;
+    }
+  } else {
+    // Editing: if password is provided, check minimum length
+    if (password && password.length < 6) {
+      showNotification('Mật khẩu phải có ít nhất 6 ký tự', 'error');
+      return;
+    }
+  }
+  
+  closeModal();
+  
+  if (itemId) {
+    await updateItemOptimistic('accounts', itemId, {
+      accountType: accountType,
+      username: username,
+      password: password,
+      phone: phone,
+      notes: notes
+    });
+  } else {
+    // var now = new Date().toISOString();
+    var newItem = {
+      id: 'A' + Date.now(),
+      parentId: parentId,
+      accountType: accountType,
+      username: username,
+      password: password,
+      phone: phone,
+      notes: notes,
+      level: calculateLevel(allAccounts, parentId),
+      order: getNextOrder(allAccounts, parentId)
+      // createdAt: now,
+      // updatedAt: now
+    };
+    await createItemOptimistic('accounts', newItem);
+  }
+}
+
+function deleteItemConfirm(type, itemId) {
+  if (confirm('Bạn có chắc chắn muốn xóa mục này?')) {
+    deleteItemOptimistic(type, itemId);
+  }
+}
+
+// Toggle password visibility in modal
+function togglePasswordInModal(inputId) {
+  var input = document.getElementById(inputId);
+  var icon = input.parentElement.querySelector('.password-toggle-icon');
+  
+  if (input.type === 'password') {
+    input.type = 'text';
+    icon.classList.remove('fa-eye');
+    icon.classList.add('fa-eye-slash');
+  } else {
+    input.type = 'password';
+    icon.classList.remove('fa-eye-slash');
+    icon.classList.add('fa-eye');
+  }
+}
+
+// Copy item text to clipboard
+function copyItemText(type, itemId) {
+  var items = type === 'prompts' ? allPrompts : 
+              (type === 'notes' ? allNotes : 
+              (type === 'tasks' ? allTasks : allAccounts));
+  var item = items.find(function(i) { return i.id === itemId; });
+  
+  if (!item) return;
+  
+  var textToCopy = '';
+  
+  if (type === 'accounts') {
+    var parts = [];
+    if (item.accountType) parts.push(item.accountType);
+    if (item.username) parts.push(item.username);
+    if (item.password) parts.push(item.password);
+    if (item.phone) parts.push(item.phone);
+    if (item.notes) parts.push(item.notes);
+    textToCopy = parts.join('\n');
+  } else {
+    // For prompts, notes, tasks: only copy content
+    textToCopy = item.content || '';
+  }
+  
+  if (!textToCopy) {
+    showNotification('Không có nội dung để sao chép', 'error');
+    return;
+  }
+  
+  // Modern clipboard API
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(textToCopy).then(function() {
+      showNotification('Đã sao chép vào clipboard!', 'success');
+    }).catch(function(err) {
+      fallbackCopyText(textToCopy);
+    });
+  } else {
+    fallbackCopyText(textToCopy);
+  }
+}
+
+// View item content in popup
+function viewItemContent(type, itemId) {
+  var items = type === 'prompts' ? allPrompts : allNotes;
+  var item = items.find(function(i) { return i.id === itemId; });
+  
+  if (!item) return;
+  
+  var modal = document.getElementById('modal-view-content');
+  document.getElementById('view-content-title').textContent = item.title || 'Untitled';
+  var contentHtml = markdownToHtml(item.content || 'Không có nội dung');
+  
+  // Process images for better loading (normalize Drive->lh3, set data-src lazy load, error handler)
+  var processed = processImagesInHtml(contentHtml);
+  document.getElementById('view-content-text').innerHTML = processed;
+  // Activate lazy-loading on images inside the view modal
+  setupLazyLoadImages();
+  
+  // Store current viewing item for copy function
+  modal.setAttribute('data-viewing-type', type);
+  modal.setAttribute('data-viewing-id', itemId);
+  
+  modal.style.display = 'flex';
+}
+
+// Copy content from view popup
+function copyViewContent() {
+  var modal = document.getElementById('modal-view-content');
+  var type = modal.getAttribute('data-viewing-type');
+  var itemId = modal.getAttribute('data-viewing-id');
+  
+  if (type && itemId) {
+    copyItemText(type, itemId);
+  }
+}
+
+// Fallback copy method for older browsers
+function fallbackCopyText(text) {
+  var textArea = document.createElement('textarea');
+  textArea.value = text;
+  textArea.style.position = 'fixed';
+  textArea.style.left = '-999999px';
+  textArea.style.top = '-999999px';
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  
+  try {
+    var successful = document.execCommand('copy');
+    if (successful) {
+      showNotification('Đã sao chép vào clipboard!', 'success');
+    } else {
+      showNotification('Không thể sao chép', 'error');
+    }
+  } catch (err) {
+    showNotification('Không thể sao chép', 'error');
+  }
+  
+  document.body.removeChild(textArea);
+}
+
+// ===== OPTIMISTIC UPDATES =====
+async function createItemOptimistic(type, item) {
+  // Optimistic UI update
+  if (type === 'prompts') {
+    allPrompts.push(item);
+  } else if (type === 'notes') {
+    allNotes.push(item);
+  } else if (type === 'tasks') {
+    allTasks.push(item);
+  } else {
+    allAccounts.push(item);
+  }
+  
+  renderCurrentTab();
+  showNotification('Đang tạo...', 'info');
+  
+  // Simulate delay
+  await sleep(1500);
+  
+  // Sync with server
+  return new Promise(function(resolve, reject) {
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result.success) {
+          showNotification('Tạo thành công', 'success');
+          resolve();
+        } else {
+          showNotification('Lỗi: ' + result.error, 'error');
+          reject();
+        }
+      })
+      .withFailureHandler(function(error) {
+        showNotification('Lỗi: ' + error.message, 'error');
+        reject();
+      })
+      .createItem(capitalizeFirst(type), item);
+  });
+}
+
+async function updateItemOptimistic(type, itemId, updates) {
+  // Optimistic UI update
+  var items = type === 'prompts' ? allPrompts : 
+              (type === 'notes' ? allNotes : 
+              (type === 'tasks' ? allTasks : allAccounts));
+  var item = items.find(function(i) { return i.id === itemId; });
+  
+  if (item) {
+    Object.keys(updates).forEach(function(key) {
+      if (key === 'tags') {
+        item[key] = normalizeTagsClient(updates[key] || '');
+      } else {
+        item[key] = updates[key];
+      }
+    });
+    item.updatedAt = new Date().toISOString();
+  }
+  
+  renderCurrentTab();
+  showNotification('Đang cập nhật...', 'info');
+  
+  // Simulate delay
+  await sleep(1500);
+  
+  // Sync with server
+  return new Promise(function(resolve, reject) {
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result.success) {
+          showNotification('Cập nhật thành công', 'success');
+          resolve();
+        } else {
+          showNotification('Lỗi: ' + result.error, 'error');
+          reject();
+        }
+      })
+      .withFailureHandler(function(error) {
+        showNotification('Lỗi: ' + error.message, 'error');
+        reject();
+      })
+      .updateItem(capitalizeFirst(type), itemId, updates);
+  });
+}
+
+// Quick View Toggle - Chỉ toggle class, không re-render
+function toggleQuickView(itemId, event) {
+  if (event) {
+    event.stopPropagation();
+    event.preventDefault();
+  }
+  
+  quickViewCollapsed[itemId] = !quickViewCollapsed[itemId];
+  
+  // Toggle class trên card content
+  var card = document.querySelector('.note-card[data-id="' + itemId + '"]');
+  if (card) {
+    var content = card.querySelector('.note-card-content');
+    var toggleBtn = card.querySelector('.quick-view-toggle i');
+    if (content) {
+      content.classList.toggle('collapsed');
+    }
+    if (toggleBtn) {
+      toggleBtn.className = 'fas fa-' + (quickViewCollapsed[itemId] ? 'chevron-down' : 'chevron-up');
+    }
+  }
+}
+
+// Toggle Pin - Chỉ re-render tab hiện tại, không re-render toàn app
+async function togglePin(type, itemId, event) {
+  if (event) {
+    event.stopPropagation();
+    event.preventDefault();
+  }
+  
+  var items = type === 'prompts' ? allPrompts : allNotes;
+  var item = items.find(function(i) { return i.id === itemId; });
+  
+  if (!item) return;
+  
+  // Toggle pin state
+  var newPinState = !item.isPinned;
+  item.isPinned = newPinState;
+  
+  // Optimistic UI update - chỉ re-render tab hiện tại
+  if ((type === 'prompts' && currentTab === 'prompts') || 
+      (type === 'notes' && currentTab === 'notes')) {
+    renderCurrentTab();
+  }
+  
+  // Sync with server
+  await updateItemOptimistic(type, itemId, { isPinned: newPinState });
+  
+  showNotification(newPinState ? 'Đã ghim' : 'Đã bỏ ghim', 'success');
+}
+
+// Filter deleted items recursively (nếu parent bị xóa thì ẩn cả children)
+function filterDeletedItems(items) {
+  if (!items || items.length === 0) return [];
+  
+  // Tạo map để tìm nhanh
+  var itemMap = {};
+  items.forEach(function(item) {
+    itemMap[item.id] = item;
+  });
+  
+  // Hàm kiểm tra item có bị xóa không (bao gồm cả parent)
+  function isItemDeleted(item) {
+    if (!item) return true;
+    if (item.isDeleted) return true;
+    // Nếu có parent, kiểm tra parent có bị xóa không
+    if (item.parentId && itemMap[item.parentId]) {
+      return isItemDeleted(itemMap[item.parentId]);
+    }
+    return false;
+  }
+  
+  // Lọc bỏ items đã bị xóa
+  return items.filter(function(item) {
+    return !isItemDeleted(item);
+  });
+}
+
+async function deleteItemOptimistic(type, itemId) {
+  // Soft Delete: Set isDeleted = true thay vì xóa khỏi mảng
+  var items = type === 'prompts' ? allPrompts : 
+              (type === 'notes' ? allNotes : 
+              (type === 'tasks' ? allTasks : allAccounts));
+  
+  // Tìm item và set isDeleted = true
+  var item = items.find(function(i) { return i.id === itemId; });
+  if (item) {
+    item.isDeleted = true;
+    
+    // Set isDeleted cho tất cả children (đệ quy)
+    function markChildrenAsDeleted(parentId) {
+      items.forEach(function(i) {
+        if (i.parentId === parentId && !i.isDeleted) {
+          i.isDeleted = true;
+          markChildrenAsDeleted(i.id);
+        }
+      });
+    }
+    markChildrenAsDeleted(itemId);
+  }
+  
+  renderCurrentTab();
+  showNotification('Đã chuyển vào thùng rác', 'info');
+  
+  // Simulate delay
+  await sleep(1500);
+  
+  // Sync with server
+  return new Promise(function(resolve, reject) {
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result.success) {
+          showNotification('Xóa thành công', 'success');
+          resolve();
+        } else {
+          showNotification('Lỗi: ' + result.error, 'error');
+          reject();
+        }
+      })
+      .withFailureHandler(function(error) {
+        showNotification('Lỗi: ' + error.message, 'error');
+        reject();
+      })
+      .deleteItem(capitalizeFirst(type), itemId);
+  });
+}
+
+// ===== HELPER FUNCTIONS =====
+function removeItemAndChildren(items, itemId) {
+  var idsToRemove = [itemId];
+  var toProcess = [itemId];
+  
+  while (toProcess.length > 0) {
+    var currentId = toProcess.pop();
+    var children = items.filter(function(i) { return i.parentId === currentId; });
+    children.forEach(function(child) {
+      idsToRemove.push(child.id);
+      toProcess.push(child.id);
+    });
+  }
+  
+  return items.filter(function(i) { return idsToRemove.indexOf(i.id) === -1; });
+}
+
+function calculateLevel(items, parentId) {
+  if (!parentId) return 0;
+  var parent = items.find(function(i) { return i.id === parentId; });
+  return parent ? parent.level + 1 : 0;
+}
+
+function getNextOrder(items, parentId) {
+  var siblings = items.filter(function(i) { return i.parentId === parentId; });
+  if (siblings.length === 0) return 1;
+  return Math.max.apply(null, siblings.map(function(s) { return s.order; })) + 1;
+}
+
+function capitalizeFirst(str) {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  var map = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  };
+  return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
+function sleep(ms) {
+  return new Promise(function(resolve) { setTimeout(resolve, ms); });
+}
+
+// ===== UI HELPERS =====
+function showLoadingOverlay() {
+  document.getElementById('loading-overlay').style.display = 'flex';
+}
+
+function hideLoadingOverlay() {
+  document.getElementById('loading-overlay').style.display = 'none';
+}
+
+function showNotification(message, type) {
+  var notification = document.getElementById('notification');
+  notification.textContent = message;
+  notification.className = 'notification show ' + type;
+  
+  setTimeout(function() {
+    notification.classList.remove('show');
+  }, 3000);
+}
+
+// ===== TEXT FORMATTING =====
+function setupTextFormatting(editorId) {
+  var editor = document.getElementById(editorId);
+  if (!editor) return;
+  
+  // Check if already setup to avoid duplicate listeners
+  if (editor.hasAttribute('data-formatting-setup')) return;
+  editor.setAttribute('data-formatting-setup', 'true');
+  
+  // Keyboard shortcuts
+  editor.addEventListener('keydown', function(e) {
+    // Ctrl+B - Bold
+    if (e.ctrlKey && e.key === 'b') {
+      e.preventDefault();
+      document.execCommand('bold', false, null);
+    }
+    // Ctrl+I - Italic
+    if (e.ctrlKey && e.key === 'i') {
+      e.preventDefault();
+      document.execCommand('italic', false, null);
+    }
+    // Ctrl+Z - Undo
+    if (e.ctrlKey && e.key === 'z') {
+      e.preventDefault();
+      undoTableAction(editor);
+    }
+  });
+  
+  // Right-click on table cells
+  editor.addEventListener('contextmenu', function(e) {
+    var cell = e.target.closest('td, th');
+    if (cell) {
+      e.preventDefault();
+      showTableContextMenu(e, cell);
+    }
+  });
+
+  // Drag and drop for images
+  editor.addEventListener('dragstart', function(e) {
+    if (e.target.closest('.image-wrapper')) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/html', e.target.closest('.image-wrapper').outerHTML);
+      e.target.closest('.image-wrapper').classList.add('dragging');
+    }
+  });
+
+  editor.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    var wrapper = e.target.closest('.image-wrapper');
+    if (wrapper && !wrapper.classList.contains('dragging')) {
+      var row = wrapper.parentElement;
+      var dragging = row.querySelector('.dragging');
+      if (dragging) {
+        var rect = wrapper.getBoundingClientRect();
+        var after = e.clientX > rect.left + rect.width / 2;
+        row.insertBefore(dragging, after ? wrapper.nextSibling : wrapper);
+      }
+    }
+  });
+
+  editor.addEventListener('dragend', function(e) {
+    var dragging = editor.querySelector('.dragging');
+    if (dragging) dragging.classList.remove('dragging');
+  });
+}
+
+// Convert Markdown to HTML for display
+function markdownToHtml(text) {
+  if (!text) return '';
+  
+  // Check if text contains HTML table or images
+  if (text.indexOf('<table') !== -1 || text.indexOf('[IMG]') !== -1) {
+    // Contains table/images, process mixed content
+    var parts = text.split(/(<table[\s\S]*?<\/table>|\[IMG\][\s\S]*?\[\/IMG\])/);
+    var result = '';
+    
+    parts.forEach(function(part, index) {
+      if (part.indexOf('<table') === 0) {
+        // It's a table
+        result += part;
+      } else if (part.indexOf('[IMG]') === 0) {
+        // It's images, convert to HTML
+        var urls = part.replace('[IMG]', '').replace('[/IMG]', '').trim().split('\n').filter(function(u) { return u.trim(); });
+        
+        // ← THÊM: Check if previous/next part has content
+        var prevPart = parts[index - 1] || '';
+        var nextPart = parts[index + 1] || '';
+        var hasContentBefore = prevPart.trim().length > 0;
+        var hasContentAfter = nextPart.trim().length > 0;
+        
+        // Add empty paragraph before if needed
+        if (!hasContentBefore && index > 0) {
+          result += '<p><br></p>';
+        }
+        
+        result += '<div class="image-row" contenteditable="false">';
+        urls.forEach(function(url) {
+          url = url.trim();
+          // KHÔNG normalize khi render - URL sẽ được normalize khi click
+          result += '<div class="image-wrapper" draggable="true">' +
+            '<img src="' + url + '" data-url="' + url + '" loading="lazy" onclick="openImageUrl(this)"/>' +
+            '<div class="btn-remove" onclick="removeImageWrapper(this)">×</div>' +
+            '</div>';
+        });
+        result += '<div class="btn-add-image" onclick="addMoreImages(this)">' +
+          '<i class="fas fa-plus"></i> Thêm' +
+          '</div></div>';
+        
+        // Add empty paragraph after if needed
+        if (!hasContentAfter && index < parts.length - 1) {
+          result += '<p><br></p>';
+        }
+      } else {
+        // It's text, process markdown
+        if (part.trim()) {
+          part = escapeHtml(part);
+          part = part.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+          part = part.replace(/\*(.*?)\*/g, '<em>$1</em>');
+          part = part.replace(/\n/g, '<br>');
+          result += part;
+        }
+      }
+    });
+    
+    return result;
+  } else {
+    // No table, normal processing
+    text = escapeHtml(text);
+    text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/\*(.*?)\*/g, '<em>$1</em>');
+    text = text.replace(/\n/g, '<br>');
+    return text;
+  }
+}
+
+function htmlToMarkdown(html) {
+  if (!html) return '';
+  
+  var temp = document.createElement('div');
+  temp.innerHTML = html;
+  
+  // EXTRACT tables và images
+  var preservedBlocks = {};
+  var blockCounter = 0;
+  
+  // Extract tables
+  temp.querySelectorAll('table').forEach(function(table) {
+    var marker = '%%BLOCK_' + blockCounter + '%%';
+    preservedBlocks[marker] = table.outerHTML;
+    table.outerHTML = marker;
+    blockCounter++;
+  });
+  
+  // Extract images
+  temp.querySelectorAll('.image-row').forEach(function(row) {
+    var urls = [];
+    row.querySelectorAll('img').forEach(function(img) {
+      urls.push(img.src);
+    });
+    var marker = '%%BLOCK_' + blockCounter + '%%';
+    preservedBlocks[marker] = '[IMG]\n' + urls.join('\n') + '\n[/IMG]';
+    row.outerHTML = marker;
+    blockCounter++;
+  });
+  
+  // Convert HTML to text
+  temp.querySelectorAll('strong, b').forEach(function(el) {
+    el.outerHTML = '**' + el.textContent + '**';
+  });
+  
+  temp.querySelectorAll('em, i').forEach(function(el) {
+    el.outerHTML = '*' + el.textContent + '*';
+  });
+  
+  temp.querySelectorAll('div').forEach(function(el) {
+    el.outerHTML = '\n' + el.innerHTML;
+  });
+  
+  temp.querySelectorAll('p').forEach(function(el) {
+    el.outerHTML = el.innerHTML + '\n';
+  });
+  
+  temp.querySelectorAll('br').forEach(function(el) {
+    el.outerHTML = '\n';
+  });
+  
+  var text = temp.textContent || temp.innerText;
+  
+  // Restore preserved blocks
+  Object.keys(preservedBlocks).forEach(function(marker) {
+    text = text.replace(marker, preservedBlocks[marker]);
+  });
+  
+  // ← CLEAN UP: loại bỏ empty lines thừa quanh blocks
+  text = text.replace(/\n{3,}/g, '\n\n'); // Max 2 newlines
+  text = text.replace(/^\n+/, ''); // Remove leading newlines
+  text = text.replace(/\n+$/, ''); // Remove trailing newlines
+  
+  return text.trim();
+}
+
+function wrapSelectedText(textarea, before, after) {
+  var start = textarea.selectionStart;
+  var end = textarea.selectionEnd;
+  var selectedText = textarea.value.substring(start, end);
+  
+  if (!selectedText) return;
+  
+  var wrappedText = before + selectedText + after;
+  textarea.value = textarea.value.substring(0, start) + wrappedText + textarea.value.substring(end);
+  
+  // Restore selection
+  textarea.selectionStart = start + before.length;
+  textarea.selectionEnd = end + before.length;
+  textarea.focus();
+}
+
+function parseMarkdown(text) {
+  // Bold: **text** -> <strong>text</strong>
+  text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  // Italic: *text* -> <em>text</em>
+  text = text.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  return text;
+}
+
+// Format text (bold/italic) - alternative to Ctrl+B/I
+function formatText(editorId, format) {
+  var editor = document.getElementById(editorId);
+  if (!editor) return;
+  
+  editor.focus();
+  if (format === 'bold') {
+    document.execCommand('bold', false, null);
+  } else if (format === 'italic') {
+    document.execCommand('italic', false, null);
+  }
+}
+
+// Create table from modal
+function createTableFromModal() {
+  var form = document.getElementById('form-insert-table');
+  var editorId = form.getAttribute('data-editor-id');
+  var rows = parseInt(document.getElementById('table-rows').value);
+  var cols = parseInt(document.getElementById('table-cols').value);
+  
+  if (!rows || !cols || rows < 1 || cols < 1 || rows > 20 || cols > 10) {
+    showNotification('Vui lòng nhập số hàng (1-20) và số cột (1-10) hợp lệ', 'error');
+    return;
+  }
+  
+  var editor = document.getElementById(editorId);
+  if (!editor) return;
+  
+  // Create table HTML
+  var tableHTML = '<table><tbody>';
+  
+  // Create header row
+  tableHTML += '<tr>';
+  for (var j = 0; j < cols; j++) {
+    tableHTML += '<th>Cột ' + (j + 1) + '</th>';
+  }
+  tableHTML += '</tr>';
+  
+  // Create data rows
+  for (var i = 0; i < rows; i++) {
+    tableHTML += '<tr>';
+    for (var j = 0; j < cols; j++) {
+      tableHTML += '<td><br></td>';
+    }
+    tableHTML += '</tr>';
+  }
+  
+  tableHTML += '</tbody></table><p><br></p>';
+  
+  // Close modal
+  var tableModal = document.getElementById('modal-insert-table');
+  tableModal.style.display = 'none';
+  document.getElementById('form-insert-table').reset();
+  
+  // Insert at cursor
+  editor.focus();
+  
+  setTimeout(function() {
+    document.execCommand('insertHTML', false, tableHTML);
+    showNotification('Đã thêm bảng', 'success');
+  }, 100);
+}
+
+// Insert table
+function insertTable(editorId) {
+  var modal = document.getElementById('modal-insert-table');
+  var form = document.getElementById('form-insert-table');
+  
+  // Reset form
+  document.getElementById('table-rows').value = 3;
+  document.getElementById('table-cols').value = 3;
+  
+  // Store editor ID for later use
+  form.setAttribute('data-editor-id', editorId);
+  
+  modal.style.display = 'flex';
+}
+
+function showTableContextMenu(e, cell) {
+  currentTableCell = cell;
+  var menu = document.getElementById('table-context-menu');
+  
+  menu.style.display = 'block';
+  menu.style.left = e.pageX + 'px';
+  menu.style.top = e.pageY + 'px';
+}
+
+// Table actions
+function tableAction(action) {
+  if (!currentTableCell) return;
+  
+  var cell = currentTableCell;
+  var row = cell.parentElement;
+  var table = cell.closest('table');
+  var tbody = table.querySelector('tbody');
+  var cellIndex = Array.from(row.children).indexOf(cell);
+  var rowIndex = Array.from(tbody.children).indexOf(row);
+  
+  // Save state before action for undo
+  var undoState = {
+    editorId: table.closest('.content-editor').id,
+    tableHTML: table.outerHTML,
+    action: action
+  };
+  
+  switch(action) {
+    case 'addRowAbove':
+      var newRow = row.cloneNode(true);
+      Array.from(newRow.children).forEach(function(td) {
+        td.innerHTML = '<br>';
+      });
+      tbody.insertBefore(newRow, row);
+      showNotification('Đã thêm hàng phía trên (Ctrl+Z để hoàn tác)', 'success');
+      tableUndoHistory.push(undoState);
+      break;
+      
+    case 'addRowBelow':
+      var newRow = row.cloneNode(true);
+      Array.from(newRow.children).forEach(function(td) {
+        td.innerHTML = '<br>';
+      });
+      if (row.nextSibling) {
+        tbody.insertBefore(newRow, row.nextSibling);
+      } else {
+        tbody.appendChild(newRow);
+      }
+      showNotification('Đã thêm hàng phía dưới (Ctrl+Z để hoàn tác)', 'success');
+      tableUndoHistory.push(undoState);
+      break;
+      
+    case 'deleteRow':
+      if (tbody.children.length <= 2) {
+        showNotification('Không thể xóa hàng cuối cùng', 'error');
+        return;
+      }
+      tbody.removeChild(row);
+      showNotification('Đã xóa hàng (Ctrl+Z để hoàn tác)', 'success');
+      tableUndoHistory.push(undoState);
+      break;
+      
+    case 'addColLeft':
+      Array.from(tbody.children).forEach(function(r, idx) {
+        var newCell = idx === 0 ? document.createElement('th') : document.createElement('td');
+        newCell.innerHTML = idx === 0 ? 'Cột mới' : '<br>';
+        r.insertBefore(newCell, r.children[cellIndex]);
+      });
+      showNotification('Đã thêm cột bên trái (Ctrl+Z để hoàn tác)', 'success');
+      tableUndoHistory.push(undoState);
+      break;
+      
+    case 'addColRight':
+      Array.from(tbody.children).forEach(function(r, idx) {
+        var newCell = idx === 0 ? document.createElement('th') : document.createElement('td');
+        newCell.innerHTML = idx === 0 ? 'Cột mới' : '<br>';
+        if (cellIndex + 1 < r.children.length) {
+          r.insertBefore(newCell, r.children[cellIndex + 1]);
+        } else {
+          r.appendChild(newCell);
+        }
+      });
+      showNotification('Đã thêm cột bên phải (Ctrl+Z để hoàn tác)', 'success');
+      tableUndoHistory.push(undoState);
+      break;
+      
+    case 'deleteCol':
+      if (row.children.length <= 1) {
+        showNotification('Không thể xóa cột cuối cùng', 'error');
+        return;
+      }
+      Array.from(tbody.children).forEach(function(r) {
+        if (r.children[cellIndex]) {
+          r.removeChild(r.children[cellIndex]);
+        }
+      });
+      showNotification('Đã xóa cột (Ctrl+Z để hoàn tác)', 'success');
+      tableUndoHistory.push(undoState);
+      break;
+      
+    case 'deleteTable':
+      if (confirm('Bạn có chắc chắn muốn xóa bảng này?')) {
+        table.remove();
+        showNotification('Đã xóa bảng (Ctrl+Z để hoàn tác)', 'success');
+        tableUndoHistory.push(undoState);
+      }
+      break;
+  }
+  
+  // Limit undo history to last 20 actions
+  if (tableUndoHistory.length > 20) {
+    tableUndoHistory.shift();
+  }
+  
+  // Hide menu
+  document.getElementById('table-context-menu').style.display = 'none';
+  currentTableCell = null;
+}
+
+// Undo table action
+function undoTableAction(editor) {
+  if (tableUndoHistory.length === 0) {
+    showNotification('Không có thao tác để hoàn tác', 'info');
+    return;
+  }
+  
+  var lastState = tableUndoHistory.pop();
+  
+  // Find the table in editor
+  var tables = editor.querySelectorAll('table');
+  var targetTable = null;
+  
+  // If table was deleted, we need to restore it
+  if (lastState.action === 'deleteTable') {
+    editor.innerHTML += lastState.tableHTML;
+    showNotification('Đã hoàn tác xóa bảng', 'success');
+    return;
+  }
+  
+  // For other actions, find and replace the modified table
+  if (tables.length > 0) {
+    targetTable = tables[tables.length - 1]; // Get last table (most recently modified)
+    var tempDiv = document.createElement('div');
+    tempDiv.innerHTML = lastState.tableHTML;
+    var restoredTable = tempDiv.querySelector('table');
+    
+    if (targetTable && restoredTable) {
+      targetTable.parentNode.replaceChild(restoredTable, targetTable);
+      showNotification('Đã hoàn tác', 'success');
+    }
+  }
+}
+
+// Insert images
+function insertImages(editorId) {
+  var editor = document.getElementById(editorId);
+  
+  // ← LƯU CURSOR POSITION
+  editor.focus();
+  var sel = window.getSelection();
+  if (sel.rangeCount > 0) {
+    savedSelection = sel.getRangeAt(0);
+  }
+  
+  var modal = document.getElementById('modal-insert-images');
+  var form = document.getElementById('form-insert-images');
+  
+  document.getElementById('image-urls').value = '';
+  form.setAttribute('data-editor-id', editorId);
+  
+  modal.style.display = 'flex';
+}
+
+function insertImagesFromModal() {
+  var form = document.getElementById('form-insert-images');
+  var editorId = form.getAttribute('data-editor-id');
+  var urls = document.getElementById('image-urls').value.trim();
+  
+  if (!urls) {
+    showNotification('Vui lòng nhập ít nhất 1 URL', 'error');
+    return;
+  }
+  
+  var editor = document.getElementById(editorId);
+  var urlList = urls.split('\n').filter(function(u) { return u.trim(); });
+  
+  // Convert Drive URLs
+  // Normalize and convert Drive URLs to lh3 where possible
+  var processedUrls = urlList.map(function(url) {
+    url = url.trim();
+    return normalizeImageUrl(url);
+  });
+  
+  // Create image row HTML
+  var imageHTML = '<div class="image-row" contenteditable="false">';
+  processedUrls.forEach(function(url) {
+    // Use data-src for lazy loading and a tiny placeholder for src
+    var placeholder = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+    imageHTML += '<div class="image-wrapper" draggable="true">' +
+      '<img src="' + placeholder + '" data-src="' + url + '" data-url="' + url + '" loading="lazy" onclick="openImageUrl(this)" onerror="this.onerror=null;handleImageError(this);"/>' +
+      '<div class="btn-remove" onclick="removeImageWrapper(this)">×</div>' +
+      '</div>';
+  });
+  imageHTML += '<div class="btn-add-image" onclick="addMoreImages(this)">' +
+    '<i class="fas fa-plus"></i> Thêm' +
+    '</div></div>';
+  
+  document.getElementById('modal-insert-images').style.display = 'none';
+  document.getElementById('image-urls').value = '';
+  
+  editor.focus();
+  
+  if (savedSelection) {
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(savedSelection);
+    
+    var range = savedSelection;
+    
+    // ← CHECK CONTEXT: có content trước/sau không?
+    var beforeNode = range.startContainer;
+    var afterNode = range.endContainer;
+    
+    var hasContentBefore = false;
+    var hasContentAfter = false;
+    
+    // Check before
+    if (beforeNode.nodeType === Node.TEXT_NODE && beforeNode.textContent.trim()) {
+      hasContentBefore = true;
+    } else if (beforeNode.previousSibling && beforeNode.previousSibling.textContent && beforeNode.previousSibling.textContent.trim()) {
+      hasContentBefore = true;
+    }
+    
+    // Check after
+    if (afterNode.nodeType === Node.TEXT_NODE && afterNode.textContent.trim()) {
+      hasContentAfter = true;
+    } else if (afterNode.nextSibling && afterNode.nextSibling.textContent && afterNode.nextSibling.textContent.trim()) {
+      hasContentAfter = true;
+    }
+    
+    // Thêm <p><br></p> nếu cần
+    var finalHTML = '';
+    if (!hasContentBefore) {
+      finalHTML += '<p><br></p>';
+    }
+    finalHTML += imageHTML;
+    if (!hasContentAfter) {
+      finalHTML += '<p><br></p>';
+    }
+    
+    var fragment = range.createContextualFragment(finalHTML);
+    range.deleteContents();
+    range.insertNode(fragment);
+    
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    
+    savedSelection = null;
+  } else {
+    // Fallback: check if editor is empty
+    var editorEmpty = !editor.textContent.trim();
+    if (editorEmpty) {
+      editor.innerHTML = '<p><br></p>' + imageHTML + '<p><br></p>';
+    } else {
+      editor.innerHTML += imageHTML + '<p><br></p>';
+    }
+  }
+  
+  showNotification('Đã thêm ' + processedUrls.length + ' hình', 'success');
+  // Initialize lazy loader for newly inserted images
+  setupLazyLoadImages();
+}
+
+// Open image URL in new tab (legacy function - giữ lại để tương thích)
+// Lưu ý: Hàm này sẽ được thay thế bởi setupImageClickHandlers() event delegation
+function openImageUrl(img) {
+  var url = img.getAttribute('data-url') || img.src;
+  if (url) {
+    // Normalize Google image URLs khi click
+    var normalizedUrl = normalizeImageUrl(url);
+    window.open(normalizedUrl, '_blank');
+  }
+}
+
+// Confirm delete action
+function confirmDeleteImage(confirmed) {
+  var modal = document.getElementById('modal-confirm-delete');
+  modal.style.display = 'none';
+  
+  if (confirmed && window.imageWrapperToDelete) {
+    var wrapper = window.imageWrapperToDelete;
+    var row = wrapper.parentElement;
+    wrapper.remove();
+    
+    // Remove entire row if only "Add" button left
+    var wrappers = row.querySelectorAll('.image-wrapper');
+    if (wrappers.length === 0) {
+      row.remove();
+    }
+    
+    showNotification('Đã xóa hình', 'success');
+  }
+  
+  window.imageWrapperToDelete = null;
+}
+
+// Remove image wrapper
+function removeImageWrapper(btn) {
+  // Store reference to wrapper
+  window.imageWrapperToDelete = btn.parentElement;
+  
+  // Show confirm modal
+  document.getElementById('modal-confirm-delete').style.display = 'flex';
+}
+
+// Add more images to existing row
+function addMoreImages(btn) {
+  var row = btn.parentElement;
+  
+  // Store current row reference
+  window.currentImageRow = row;
+  
+  // Show modal
+  document.getElementById('more-image-urls').value = '';
+  document.getElementById('modal-add-more-images').style.display = 'flex';
+}
+
+// Add from modal
+function addMoreImagesFromModal() {
+  var urls = document.getElementById('more-image-urls').value.trim();
+  
+  if (!urls) {
+    showNotification('Vui lòng nhập ít nhất 1 URL', 'error');
+    return;
+  }
+  
+  var row = window.currentImageRow;
+  if (!row) return;
+  
+  var urlList = urls.split('\n').filter(function(u) { return u.trim(); });
+  
+  // Process URLs
+  var processedUrls = urlList.map(function(url) {
+    url = url.trim();
+    var driveMatch = url.match(/d\/([^/]+)/);
+    if (driveMatch) {
+      return 'https://drive.google.com/thumbnail?id=' + driveMatch[1];
+    }
+    return url;
+  });
+  
+  // Find "Add" button
+  var addBtn = row.querySelector('.btn-add-image');
+  
+  // Insert before "Add" button
+  processedUrls.forEach(function(url) {
+    // KHÔNG normalize khi render - URL sẽ được normalize khi click
+    var wrapper = document.createElement('div');
+    wrapper.className = 'image-wrapper';
+    wrapper.setAttribute('draggable', 'true');
+    wrapper.innerHTML = '<img src="' + url + '" data-url="' + url + '" loading="lazy" onclick="openImageUrl(this)"/>' +
+      '<div class="btn-remove" onclick="removeImageWrapper(this)">×</div>';
+    row.insertBefore(wrapper, addBtn);
+  });
+  
+  // Close modal
+  document.getElementById('modal-add-more-images').style.display = 'none';
+  window.currentImageRow = null;
+  
+  showNotification('Đã thêm ' + processedUrls.length + ' hình', 'success');
+}
+
+function setupDragAndDrop() {
+  document.addEventListener('dragstart', handleDragStart);
+  document.addEventListener('dragover', handleDragOver);
+  document.addEventListener('drop', handleDrop);
+  document.addEventListener('dragend', handleDragEnd);
+}
+
+function handleDragStart(e) {
+  var target = e.target.closest('.prompt-card, .task-item');
+  if (!target) return;
+  
+  draggedItem = target;
+  e.dataTransfer.effectAllowed = 'move';
+  target.style.opacity = '0.4';
+  
+  var siblings = Array.from(target.parentElement.children).filter(function(el) {
+    return el.classList.contains('prompt-card') || el.classList.contains('task-item');
+  });
+  originalIndex = siblings.indexOf(target);
+  
+  draggedParentId = target.getAttribute('data-id');
+}
+
+function handleDragOver(e) {
+  if (!draggedItem) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  
+  var target = e.target.closest('.prompt-card, .task-item');
+  if (!target || target === draggedItem) return;
+  
+  var container = draggedItem.parentElement;
+  var targetContainer = target.parentElement;
+  
+  if (container !== targetContainer) return;
+  
+  var rect = target.getBoundingClientRect();
+  var after = e.clientY > rect.top + rect.height / 2;
+  
+  container.insertBefore(draggedItem, after ? target.nextSibling : target);
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  if (!draggedItem) return;
+  
+  // Check if position actually changed
+  var siblings = Array.from(draggedItem.parentElement.children).filter(function(el) {
+    return el.classList.contains('prompt-card') || el.classList.contains('task-item');
+  });
+  var newIndex = siblings.indexOf(draggedItem);
+  
+  // ← THÊM KIỂM TRA NÀY
+  if (newIndex !== originalIndex) {
+    // Update order in data only if position changed
+    updateItemOrder();
+  }
+}
+
+function handleDragEnd(e) {
+  if (draggedItem) {
+    draggedItem.style.opacity = '';
+    draggedItem = null;
+  }
+  draggedParentId = null;
+  originalIndex = -1; // ← THÊM DÒNG NÀY
+}
+
+function updateItemOrder() {
+  var container = draggedItem.parentElement;
+  var items = Array.from(container.children).filter(function(el) {
+    return el.classList.contains('prompt-card') || el.classList.contains('task-item');
+  });
+  
+  var tabType = currentTab;
+  var dataArray = tabType === 'prompts' ? allPrompts : 
+                  (tabType === 'notes' ? allNotes : 
+                  (tabType === 'tasks' ? allTasks : allAccounts));
+  
+  items.forEach(function(item, index) {
+    var itemId = item.getAttribute('data-id');
+    var dataItem = dataArray.find(function(d) { return d.id === itemId; });
+    if (dataItem) {
+      dataItem.order = index + 1;
+    }
+  });
+  
+  if (tabType === 'tasks') {
+    renderTasksCalendar();
+  } else {
+    renderCurrentTab();
+  }
+  
+  syncOrderWithBackend(tabType, items);
+  
+  showNotification('Đã cập nhật thứ tự', 'success');
+}
+
+async function syncOrderWithBackend(tabType, items) {
+  var sheetName = tabType === 'prompts' ? 'Prompts' : 
+                  (tabType === 'notes' ? 'Notes' : 
+                  (tabType === 'tasks' ? 'Tasks' : 'Accounts'));
+  
+  var updates = items.map(function(item, index) {
+    return {
+      id: item.getAttribute('data-id'),
+      order: index + 1
+    };
+  });
+  
+  return new Promise(function(resolve, reject) {
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result.success) {
+          resolve();
+        } else {
+          showNotification('Lỗi đồng bộ: ' + result.error, 'error');
+          reject();
+        }
+      })
+      .withFailureHandler(function(error) {
+        showNotification('Lỗi: ' + error.message, 'error');
+        reject();
+      })
+      .batchUpdateOrder(sheetName, updates);
+  });
+}
+
+// ===== TASKS CALENDAR FUNCTIONS =====
+
+// ===== RECYCLE BIN =====
+function renderRecycleBin() {
+  var container = document.getElementById('recycle-container');
+  container.innerHTML = '';
+
+  // Collect deleted items in required order (no deep clone)
+  var deletedItems = [];
+  deletedItems = deletedItems.concat(allPrompts.filter(function(x) { return x.isDeleted; }));
+  deletedItems = deletedItems.concat(allNotes.filter(function(x) { return x.isDeleted; }));
+  deletedItems = deletedItems.concat(allAccounts.filter(function(x) { return x.isDeleted; }));
+  deletedItems = deletedItems.concat(allTasks.filter(function(x) { return x.isDeleted; }));
+
+  if (!deletedItems || deletedItems.length === 0) {
+    container.innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>Thùng rác trống</p></div>';
+    return;
+  }
+
+  // Render by type groups in the required order
+  var createSection = function(title) {
+    var sec = document.createElement('div');
+    sec.className = 'recycle-section';
+    var h = document.createElement('h4');
+    h.textContent = title;
+    sec.appendChild(h);
+    return sec;
+  };
+
+  // Helper to render an item row
+  var renderRow = function(item, sheetName, displayField, typeLabel) {
+    var row = document.createElement('div');
+    row.className = 'recycle-row';
+    var left = document.createElement('div');
+    left.className = 'recycle-left';
+    left.innerHTML = '<strong>' + typeLabel + '</strong> <span class="muted">(' + sheetName + ')</span>';
+
+    var displayValue = item[displayField] || '';
+    var middle = document.createElement('div');
+    middle.className = 'recycle-middle';
+    middle.textContent = displayValue;
+
+    var actions = document.createElement('div');
+    actions.className = 'recycle-actions';
+
+    var btnRestore = document.createElement('button');
+    btnRestore.className = 'btn btn-secondary';
+    btnRestore.textContent = '♻️ Restore';
+    btnRestore.addEventListener('click', function() {
+      // Update isDeleted = false via updateItem
+      google.script.run
+        .withSuccessHandler(function() {
+          loadAllData().then(renderRecycleBin);
+          showNotification('Đã khôi phục', 'success');
+        })
+        .withFailureHandler(function(err) {
+          showNotification('Lỗi khi khôi phục: ' + (err && err.message ? err.message : err), 'error');
+        })
+        .updateItem(sheetName, item.id, { isDeleted: false });
+    });
+
+    var btnDelete = document.createElement('button');
+    btnDelete.className = 'btn btn-primary';
+    btnDelete.style.background = '#e94849';
+    btnDelete.textContent = 'Xóa vĩnh viễn';
+    btnDelete.addEventListener('click', function() {
+      if (!confirm('Xóa vĩnh viễn? Không thể khôi phục.')) return;
+      google.script.run
+        .withSuccessHandler(function() {
+          loadAllData().then(renderRecycleBin);
+          showNotification('Đã xóa vĩnh viễn', 'success');
+        })
+        .withFailureHandler(function(err) {
+          showNotification('Lỗi khi xóa: ' + (err && err.message ? err.message : err), 'error');
+        })
+        .deleteItemById(sheetName, item.id);
+    });
+
+    actions.appendChild(btnRestore);
+    actions.appendChild(btnDelete);
+
+    row.appendChild(left);
+    row.appendChild(middle);
+    row.appendChild(actions);
+    return row;
+  };
+
+  // Sections in order: Prompts, Notes, Accounts, Tasks
+  var promptsSection = createSection('Prompts');
+  deletedItems.filter(function(i) { return allPrompts.indexOf(i) !== -1; }).forEach(function(item) {
+    promptsSection.appendChild(renderRow(item, 'Prompts', 'title', 'Prompt'));
+  });
+  if (promptsSection.querySelectorAll('.recycle-row').length > 0) container.appendChild(promptsSection);
+
+  var notesSection = createSection('Notes');
+  deletedItems.filter(function(i) { return allNotes.indexOf(i) !== -1; }).forEach(function(item) {
+    notesSection.appendChild(renderRow(item, 'Notes', 'title', 'Note'));
+  });
+  if (notesSection.querySelectorAll('.recycle-row').length > 0) container.appendChild(notesSection);
+
+  var accountsSection = createSection('Accounts');
+  deletedItems.filter(function(i) { return allAccounts.indexOf(i) !== -1; }).forEach(function(item) {
+    accountsSection.appendChild(renderRow(item, 'Accounts', 'accountType', 'Account'));
+  });
+  if (accountsSection.querySelectorAll('.recycle-row').length > 0) container.appendChild(accountsSection);
+
+  var tasksSection = createSection('Tasks');
+  deletedItems.filter(function(i) { return allTasks.indexOf(i) !== -1; }).forEach(function(item) {
+    tasksSection.appendChild(renderRow(item, 'Tasks', 'title', 'Task'));
+  });
+  if (tasksSection.querySelectorAll('.recycle-row').length > 0) container.appendChild(tasksSection);
+}
+
+// ===== SETTINGS RENDERING =====
+function renderSettings() {
+  // Load current settings values into inputs
+  var bgMain = appSettings['bg-main'] || '#f5f7fa';
+  
+  // Level 0 defaults
+  var lv0Color = appSettings['lv0-color'] || '#1a472a';
+  var lv0Bg = appSettings['lv0-bg'] || '#ffffff';
+  var lv0BorderWidth = appSettings['lv0-border-width'] || '3';
+  var lv0BorderColor = appSettings['lv0-border-color'] || '#24c560';
+  
+  // Level 1 defaults
+  var lv1Color = appSettings['lv1-color'] || '#1ea84d';
+  var lv1Bg = appSettings['lv1-bg'] || '#ffffff';
+  var lv1BorderWidth = appSettings['lv1-border-width'] || '4';
+  var lv1BorderColor = appSettings['lv1-border-color'] || '#24c560';
+  
+  // Level 2 defaults
+  var lv2Color = appSettings['lv2-color'] || '#3782f4';
+  var lv2Bg = appSettings['lv2-bg'] || '#ffffff';
+  var lv2BorderWidth = appSettings['lv2-border-width'] || '1';
+  var lv2BorderColor = appSettings['lv2-border-color'] || '#e0e0e0';
+  
+  // Update inputs
+  document.getElementById('setting-bg-main').value = bgMain;
+  document.getElementById('setting-bg-main-text').value = bgMain;
+  
+  // Level 0
+  document.getElementById('setting-lv0-color').value = lv0Color;
+  document.getElementById('setting-lv0-color-text').value = lv0Color;
+  document.getElementById('setting-lv0-bg').value = lv0Bg;
+  document.getElementById('setting-lv0-bg-text').value = lv0Bg;
+  document.getElementById('setting-lv0-border-width').value = lv0BorderWidth;
+  document.getElementById('setting-lv0-border-color').value = lv0BorderColor;
+  document.getElementById('setting-lv0-border-color-text').value = lv0BorderColor;
+  
+  // Level 1
+  document.getElementById('setting-lv1-color').value = lv1Color;
+  document.getElementById('setting-lv1-color-text').value = lv1Color;
+  document.getElementById('setting-lv1-bg').value = lv1Bg;
+  document.getElementById('setting-lv1-bg-text').value = lv1Bg;
+  document.getElementById('setting-lv1-border-width').value = lv1BorderWidth;
+  document.getElementById('setting-lv1-border-color').value = lv1BorderColor;
+  document.getElementById('setting-lv1-border-color-text').value = lv1BorderColor;
+  
+  // Level 2
+  document.getElementById('setting-lv2-color').value = lv2Color;
+  document.getElementById('setting-lv2-color-text').value = lv2Color;
+  document.getElementById('setting-lv2-bg').value = lv2Bg;
+  document.getElementById('setting-lv2-bg-text').value = lv2Bg;
+  document.getElementById('setting-lv2-border-width').value = lv2BorderWidth;
+  document.getElementById('setting-lv2-border-color').value = lv2BorderColor;
+  document.getElementById('setting-lv2-border-color-text').value = lv2BorderColor;
+}
+
+// Sync color picker with text input
+function syncColorInputs(colorPickerId, textInputId) {
+  var picker = document.getElementById(colorPickerId);
+  var textInput = document.getElementById(textInputId);
+  
+  if (picker && textInput) {
+    // Sync picker -> text
+    picker.addEventListener('input', function(e) {
+      textInput.value = e.target.value;
+    });
+    
+    // Sync text -> picker
+    textInput.addEventListener('input', function(e) {
+      var value = e.target.value.trim();
+      if (/^#[0-9A-Fa-f]{6}$/.test(value)) {
+        picker.value = value;
+      }
+    });
+  }
+}
+
+// Save settings
+async function saveSettingsToBackend() {
+  var settings = {
+    'bg-main': document.getElementById('setting-bg-main').value,
+    'lv0-color': document.getElementById('setting-lv0-color').value,
+    'lv0-bg': document.getElementById('setting-lv0-bg').value,
+    'lv0-border-width': document.getElementById('setting-lv0-border-width').value,
+    'lv0-border-color': document.getElementById('setting-lv0-border-color').value,
+    'lv1-color': document.getElementById('setting-lv1-color').value,
+    'lv1-bg': document.getElementById('setting-lv1-bg').value,
+    'lv1-border-width': document.getElementById('setting-lv1-border-width').value,
+    'lv1-border-color': document.getElementById('setting-lv1-border-color').value,
+    'lv2-color': document.getElementById('setting-lv2-color').value,
+    'lv2-bg': document.getElementById('setting-lv2-bg').value,
+    'lv2-border-width': document.getElementById('setting-lv2-border-width').value,
+    'lv2-border-color': document.getElementById('setting-lv2-border-color').value
+  };
+  
+  // Update local settings
+  appSettings = settings;
+  
+  // Apply immediately
+  applySettings();
+  
+  showNotification('Đang lưu cài đặt...', 'info');
+  
+  // Save to backend
+  return new Promise(function(resolve, reject) {
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result.success) {
+          showNotification('Đã lưu cài đặt thành công', 'success');
+          resolve();
+        } else {
+          showNotification('Lỗi: ' + result.error, 'error');
+          reject();
+        }
+      })
+      .withFailureHandler(function(error) {
+        showNotification('Lỗi: ' + error.message, 'error');
+        reject(error);
+      })
+      .saveSettings(settings);
+  });
+}
+
+// Reset settings to default
+function resetSettingsToDefault() {
+  if (!confirm('Bạn có chắc chắn muốn đặt lại cài đặt về mặc định?')) {
+    return;
+  }
+  
+  var defaultSettings = {
+    'bg-main': '#f5f7fa',
+    'lv0-color': '#1a472a',
+    'lv0-bg': '#ffffff',
+    'lv0-border-width': '3',
+    'lv0-border-color': '#24c560',
+    'lv1-color': '#1ea84d',
+    'lv1-bg': '#ffffff',
+    'lv1-border-width': '4',
+    'lv1-border-color': '#24c560',
+    'lv2-color': '#3782f4',
+    'lv2-bg': '#ffffff',
+    'lv2-border-width': '1',
+    'lv2-border-color': '#e0e0e0'
+  };
+  
+  appSettings = defaultSettings;
+  
+  // Update inputs
+  document.getElementById('setting-bg-main').value = defaultSettings['bg-main'];
+  document.getElementById('setting-bg-main-text').value = defaultSettings['bg-main'];
+  
+  // Level 0
+  document.getElementById('setting-lv0-color').value = defaultSettings['lv0-color'];
+  document.getElementById('setting-lv0-color-text').value = defaultSettings['lv0-color'];
+  document.getElementById('setting-lv0-bg').value = defaultSettings['lv0-bg'];
+  document.getElementById('setting-lv0-bg-text').value = defaultSettings['lv0-bg'];
+  document.getElementById('setting-lv0-border-width').value = defaultSettings['lv0-border-width'];
+  document.getElementById('setting-lv0-border-color').value = defaultSettings['lv0-border-color'];
+  document.getElementById('setting-lv0-border-color-text').value = defaultSettings['lv0-border-color'];
+  
+  // Level 1
+  document.getElementById('setting-lv1-color').value = defaultSettings['lv1-color'];
+  document.getElementById('setting-lv1-color-text').value = defaultSettings['lv1-color'];
+  document.getElementById('setting-lv1-bg').value = defaultSettings['lv1-bg'];
+  document.getElementById('setting-lv1-bg-text').value = defaultSettings['lv1-bg'];
+  document.getElementById('setting-lv1-border-width').value = defaultSettings['lv1-border-width'];
+  document.getElementById('setting-lv1-border-color').value = defaultSettings['lv1-border-color'];
+  document.getElementById('setting-lv1-border-color-text').value = defaultSettings['lv1-border-color'];
+  
+  // Level 2
+  document.getElementById('setting-lv2-color').value = defaultSettings['lv2-color'];
+  document.getElementById('setting-lv2-color-text').value = defaultSettings['lv2-color'];
+  document.getElementById('setting-lv2-bg').value = defaultSettings['lv2-bg'];
+  document.getElementById('setting-lv2-bg-text').value = defaultSettings['lv2-bg'];
+  document.getElementById('setting-lv2-border-width').value = defaultSettings['lv2-border-width'];
+  document.getElementById('setting-lv2-border-color').value = defaultSettings['lv2-border-color'];
+  document.getElementById('setting-lv2-border-color-text').value = defaultSettings['lv2-border-color'];
+  
+  // Apply immediately
+  applySettings();
+  
+  // Save to backend
+  saveSettingsToBackend();
+}
+
+function getMonthStart(date) {
+  var d = new Date(date);
+  d.setDate(1);
+  return d;
+}
+
+function getMonthEnd(date) {
+  var d = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  return d;
+}
+
+function goToThisWeek() {
+  currentMonthDate = new Date();
+  renderTasksCalendar();
+}
+
+function changeWeek(direction) {
+  currentMonthDate.setMonth(currentMonthDate.getMonth() + direction);
+  renderTasksCalendar();
+}
+
+function formatDate(date) {
+  var year = date.getFullYear();
+  var month = String(date.getMonth() + 1).padStart(2, '0');
+  var day = String(date.getDate()).padStart(2, '0');
+  return year + '-' + month + '-' + day;
+}
+
+function formatDateDisplay(date) {
+  var day = String(date.getDate()).padStart(2, '0');
+  var month = String(date.getMonth() + 1).padStart(2, '0');
+  return day + '/' + month;
+}
+
+function getMonthName(date) {
+  var months = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6',
+                'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12'];
+  return months[date.getMonth()] + ' ' + date.getFullYear();
+}
+
+function renderTasksCalendar() {
+  var container = document.getElementById('tasks-calendar');
+  container.innerHTML = '';
+  
+  var monthStart = getMonthStart(currentMonthDate);
+  var monthEnd = getMonthEnd(currentMonthDate);
+  var monthStartStr = formatDate(monthStart);
+  var monthEndStr = formatDate(monthEnd);
+
+  // Lọc bỏ items đã bị xóa
+  var activeTasks = filterDeletedItems(allTasks);
+  var filteredTasks = searchTermTasks ? 
+    filterItems(activeTasks, searchTermTasks) : 
+    activeTasks;
+
+  // SỬA: dùng filteredTasks thay vì allTasks
+  var monthTasks = filteredTasks.filter(function(t) {
+    return t.date >= monthStartStr && t.date <= monthEndStr;
+  });
+
+  var totalTasks = monthTasks.length;
+  var completedTasks = monthTasks.filter(function(t) { return t.completed; }).length;
+  var completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+  var today = new Date();
+  var next7Days = new Date(today);
+  next7Days.setDate(today.getDate() + 7);
+  var todayStr = formatDate(today);
+  var next7DaysStr = formatDate(next7Days);
+
+  // SỬA: dùng filteredTasks
+  var upcomingTasks = filteredTasks.filter(function(t) {
+    return t.date >= todayStr && t.date <= next7DaysStr && !t.completed;
+  }).length;
+
+  // Update header với stats
+  document.getElementById('current-week-label').textContent = getMonthName(currentMonthDate);
+  document.getElementById('stat-total').textContent = totalTasks;
+  document.getElementById('stat-completed').textContent = completedTasks;
+  document.getElementById('stat-rate').textContent = completionRate + '%';
+  document.getElementById('stat-upcoming').textContent = upcomingTasks;
+  
+  var dayNames = ['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7', 'Chủ nhật'];
+  var today = formatDate(new Date());
+  
+  // Create header row for day names
+  dayNames.forEach(function(dayName) {
+    var headerCell = document.createElement('div');
+    headerCell.className = 'calendar-day-header';
+    headerCell.textContent = dayName;
+    container.appendChild(headerCell);
+  });
+  
+  // Start from first Monday before month start
+  var startDate = new Date(monthStart);
+  var dayOfWeek = startDate.getDay();
+  var diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  startDate.setDate(startDate.getDate() + diff);
+  
+  // Calculate total days to show (complete weeks)
+  var endDate = new Date(monthEnd);
+  var totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 7;
+  totalDays = Math.ceil(totalDays / 7) * 7; // Round to complete weeks
+  
+  for (var i = 0; i < totalDays; i++) {
+    var currentDate = new Date(startDate);
+    currentDate.setDate(currentDate.getDate() + i);
+    var dateStr = formatDate(currentDate);
+    
+    var isCurrentMonth = currentDate.getMonth() === currentMonthDate.getMonth();
+    
+    var dayCell = document.createElement('div');
+    dayCell.className = 'day-cell';
+    if (dateStr === today) {
+      dayCell.classList.add('today');
+    }
+    if (!isCurrentMonth) {
+      dayCell.classList.add('other-month');
+    }
+    
+    // Get ALL tasks for this date (including children)
+    var allDayTasks = filteredTasks.filter(function(t) { return t.date === dateStr; });
+    var taskCount = allDayTasks.length;
+    var completedCount = allDayTasks.filter(function(t) { return t.completed; }).length;
+    
+    // Day header - HIỂN THỊ NGÀY VÀ SỐ LƯỢNG TASKS
+    var header = document.createElement('div');
+    header.className = 'day-header';
+    header.innerHTML = 
+      '<div class="day-date">' + 
+      formatDateDisplay(currentDate) + 
+      // ← SỬA DÒNG NÀY
+      (taskCount > 0 ? 
+        (completedCount === taskCount ? 
+          ' <span class="task-completed-icon"><i class="fas fa-check-circle"></i></span>' : 
+          ' <span class="task-count">' + completedCount + '/' + taskCount + '</span>') 
+        : '') +
+      '</div>' +
+      '<i class="fas fa-plus day-add-task" onclick="showAddTaskModalForDate(\'' + dateStr + '\')"></i>';
+    
+    dayCell.appendChild(header);
+    
+    // Tasks list
+    var tasksList = document.createElement('div');
+    tasksList.className = 'tasks-list';
+    
+    // Get root tasks for this date (level 0)
+    var dayTasks = filteredTasks.filter(function(t) { 
+      return t.date === dateStr && t.level === 0; 
+    });
+    dayTasks.sort(function(a, b) { return a.order - b.order; });
+    
+    dayTasks.forEach(function(task) {
+      renderTaskItem(tasksList, task, dateStr);
+    });
+    
+    dayCell.appendChild(tasksList);
+    container.appendChild(dayCell);
+  }
+}
+
+function renderTaskItem(container, task, dateStr) {
+  var taskItem = document.createElement('div');
+  taskItem.className = 'task-item level-' + task.level;
+  if (task.completed) {
+    taskItem.classList.add('completed');
+  }
+
+  taskItem.setAttribute('data-id', task.id);
+  taskItem.setAttribute('draggable', 'true');
+  
+  // Check if task has children
+  var children = allTasks.filter(function(t) { return t.parentId === task.id; });
+  var hasChildren = children.length > 0;
+  
+  if (hasChildren) {
+    taskItem.classList.add('has-children');
+  }
+  
+  // ← THÊM: Toggle icon nếu có children
+  var isExpanded = expandedTasks[task.id] === true;
+  var toggleIcon = hasChildren ? 
+    '<i class="fas fa-chevron-right task-toggle ' + (isExpanded ? 'expanded' : '') + '" onclick="toggleTaskChildren(event, \'' + task.id + '\')"></i>' : 
+    '';
+  
+  taskItem.innerHTML = 
+    '<input type="checkbox" class="task-checkbox" ' + 
+    (task.completed ? 'checked' : '') + 
+    ' onchange="toggleTaskComplete(\'' + task.id + '\')">' +
+    toggleIcon +
+    '<div class="task-title">' + escapeHtml(task.title) + '</div>' +
+    '<div class="task-actions">' +
+    (task.content ? '<i class="fas fa-eye" onclick="viewTaskContent(\'' + task.id + '\')"></i>' : '') +
+    (hasChildren || task.level === 0 ? 
+      '<i class="fas fa-plus" onclick="addChildTask(\'' + task.id + '\', \'' + dateStr + '\')"></i>' : '') +
+    '<i class="fas fa-edit" onclick="editTask(\'' + task.id + '\')"></i>' +
+    '<i class="fas fa-trash" onclick="deleteTaskConfirm(\'' + task.id + '\')"></i>' +
+    '</div>';
+
+  if (task.level <= 1) {
+    var tooltipText = task.title;
+    if (task.content) {
+      var plainContent = task.content
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<[^>]*>/g, '')
+        .substring(0, 150);
+      tooltipText += '\n───────────────\n' + plainContent;
+    }
+    taskItem.setAttribute('data-tooltip', tooltipText);
+  }
+  
+  container.appendChild(taskItem);
+  
+  // Render children
+  if (children.length > 0) {
+    children.sort(function(a, b) { return a.order - b.order; });
+    
+    var childrenContainer = document.createElement('div');
+    var isExpanded = expandedTasks[task.id] === true;
+    childrenContainer.className = isExpanded ? 'task-children' : 'task-children collapsed';
+    childrenContainer.setAttribute('data-parent-id', task.id);
+    
+    children.forEach(function(child) {
+      renderTaskItem(childrenContainer, child, dateStr);
+    });
+    
+    container.appendChild(childrenContainer);
+  }
+}
+
+function toggleTaskChildren(event, taskId) {
+  event.stopPropagation();
+  
+  var childrenContainer = document.querySelector('.task-children[data-parent-id="' + taskId + '"]');
+  var toggleIcon = event.target;
+  
+  if (childrenContainer) {
+    if (childrenContainer.classList.contains('collapsed')) {
+      // Expand
+      childrenContainer.classList.remove('collapsed');
+      toggleIcon.classList.add('expanded');
+      expandedTasks[taskId] = true;
+    } else {
+      // Collapse
+      childrenContainer.classList.add('collapsed');
+      toggleIcon.classList.remove('expanded');
+      delete expandedTasks[taskId];
+    }
+  }
+}
+
+function htmlToPlainText(html) {
+  var temp = document.createElement('div');
+  temp.innerHTML = html;
+  return temp.textContent || temp.innerText || '';
+}
+
+function showAddTaskModal() {
+  var today = new Date();
+  showAddTaskModalForDate(formatDate(today));
+}
+
+function showAddTaskModalForDate(dateStr, parentId) {
+  closeModal();
+  
+  var modal = document.getElementById('modal-task');
+  var form = modal.querySelector('form');
+  
+  form.reset();
+  form.removeAttribute('data-id');
+  form.removeAttribute('data-parent-id');
+  
+  document.getElementById('task-date').value = dateStr;
+  document.getElementById('task-content').innerHTML = '';
+  
+  // Set parentId if adding child
+  if (parentId) {
+    form.setAttribute('data-parent-id', parentId);
+    modal.querySelector('.modal-title').textContent = 'Thêm Task con';
+  } else {
+    modal.querySelector('.modal-title').textContent = 'Thêm Task mới';
+  }
+  
+  // Setup text formatting
+  setupTextFormatting('task-content');
+  
+  modal.style.display = 'flex';
+}
+
+function addChildTask(parentId, dateStr) {
+  showAddTaskModalForDate(dateStr, parentId);
+}
+
+function editTask(taskId) {
+  var task = allTasks.find(function(t) { return t.id === taskId; });
+  if (!task) return;
+  
+  var modal = document.getElementById('modal-task');
+  var form = modal.querySelector('form');
+  
+  form.setAttribute('data-id', taskId);
+  form.removeAttribute('data-parent-id');
+  
+  document.getElementById('task-date').value = task.date;
+  document.getElementById('task-title').value = task.title;
+  document.getElementById('task-content').innerHTML = markdownToHtml(task.content || '');
+  document.getElementById('task-completed').checked = task.completed;
+  
+  // Setup text formatting
+  setupTextFormatting('task-content');
+  
+  modal.querySelector('.modal-title').textContent = 'Sửa Task';
+  modal.style.display = 'flex';
+}
+
+async function saveTask() {
+  var form = document.getElementById('form-task');
+  var itemId = form.getAttribute('data-id');
+  var parentId = form.getAttribute('data-parent-id') || '';
+  
+  var date = document.getElementById('task-date').value;
+  var title = document.getElementById('task-title').value.trim();
+  var content = htmlToMarkdown(document.getElementById('task-content').innerHTML);
+  var level = parentId ? 1 : 0;
+  var completed = document.getElementById('task-completed').checked;
+  
+  if (!date || !title) {
+    showNotification('Vui lòng nhập đầy đủ thông tin', 'error');
+    return;
+  }
+  
+  closeModal();
+  
+  if (itemId) {
+    await updateItemOptimistic('tasks', itemId, {
+      date: date,
+      title: title,
+      content: content,
+      completed: completed
+    });
+  } else {
+    // Tính order đúng cho Tasks
+    var siblings;
+    if (parentId) {
+      // Task con: lấy order theo parentId
+      siblings = allTasks.filter(function(t) {
+        return t.parentId === parentId;
+      });
+    } else {
+      // Task cha: lấy order theo DATE ← SỬA CHÍNH Ở ĐÂY
+      siblings = allTasks.filter(function(t) {
+        return t.date === date && t.parentId === '';
+      });
+    }
+    
+    var newOrder = siblings.length === 0 ? 1 : 
+      Math.max.apply(null, siblings.map(function(s) { return s.order; })) + 1;
+    
+    var newTask = {
+      id: 'T' + Date.now(),
+      parentId: parentId,
+      date: date,
+      title: title,
+      content: content,
+      level: level,
+      completed: completed,
+      order: newOrder  // ← DÙNG newOrder thay vì getNextOrder
+    };
+    await createItemOptimistic('tasks', newTask);
+  }
+}
+
+function viewTaskContent(taskId) {
+  var task = allTasks.find(function(t) { return t.id === taskId; });
+  if (!task) return;
+  
+  var modal = document.getElementById('modal-view-content');
+  document.getElementById('view-content-title').textContent = task.title || 'Untitled';
+  
+  var contentHtml = markdownToHtml(task.content || 'Không có nội dung');
+  // KHÔNG normalize khi render - sẽ xử lý khi click
+  document.getElementById('view-content-text').innerHTML = contentHtml;
+  
+  // Store current viewing item for copy function
+  modal.setAttribute('data-viewing-type', 'tasks');
+  modal.setAttribute('data-viewing-id', taskId);
+  
+  modal.style.display = 'flex';
+}
+
+async function toggleTaskComplete(taskId) {
+  var task = allTasks.find(function(t) { return t.id === taskId; });
+  if (!task) return;
+  
+  task.completed = !task.completed;
+  renderTasksCalendar();
+  
+  await updateItemOptimistic('tasks', taskId, { completed: task.completed });
+}
+
+function deleteTaskConfirm(taskId) {
+  if (confirm('Bạn có chắc chắn muốn xóa task này?')) {
+    deleteItemOptimistic('tasks', taskId);
+  }
+}
+
+// Global click to hide context menu
+document.addEventListener('click', function() {
+  document.getElementById('table-context-menu').style.display = 'none';
+});
+// Initialize app when DOM is ready
+document.addEventListener('DOMContentLoaded', initializeApp);
+</script>
